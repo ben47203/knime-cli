@@ -1,0 +1,18 @@
+# KNIME's SDK setup repo (separate clone, imported into Eclipse from here)
+/knime-sdk-setup/
+
+# macOS
+.DS_Store
+
+# Eclipse / PDE
+.metadata/
+bin/
+*.class
+
+# Maven / Tycho
+target/
+
+# Node / TS
+node_modules/
+dist/
+*.log
