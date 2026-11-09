@@ -5,7 +5,7 @@ A KNIME 5.12 plugin that exposes the running Analytics Platform over a local API
 ## Architecture
 
 ```
-TS CLI / MCP  ──HTTP + token──▶  Java plugin (Jetty, 127.0.0.1)
+TS CLI / MCP  ──HTTP + token──▶  Java plugin (JDK HttpServer, 127.0.0.1)
                                    ├─ /rpc  → gateway DefaultJsonRpcRequestHandler (same API as KNIME's UI)
                                    └─ /api  → our endpoints on WorkflowManager (settings, tables, summaries)
 ```
@@ -20,16 +20,23 @@ TS CLI / MCP  ──HTTP + token──▶  Java plugin (Jetty, 127.0.0.1)
 ### M0: Environment ✅
 Temurin 21, Eclipse 2025-06 RCP, `knime-sdk-setup` (branch `releases/2026-06`, `KNIME-AP.target` → 5.12 site), test launch working.
 
-### M1: Spike (prove the approach)
+### M1: Spike (prove the approach) 🚧
 - Plugin project, started at launch (`org.eclipse.ui.startup`)
-- Jetty on `127.0.0.1:<random>`, bearer token, discovery file `~/.knime-cli/instances/<pid>.json` (0600, deleted on exit)
+- JDK `HttpServer` on `127.0.0.1:<random>`, bearer token, discovery file `~/.knime-cli/instances/<pid>.json` (0600, deleted on exit)
 - `/rpc` pass-through to `DefaultJsonRpcRequestHandler`
 - TS script: `ApplicationService.getState` → `getWorkflow` → `AddNodeCommand`, node appears in the UI
 - Check: threading, errors, Host/Origin rejection
 
+Findings so far:
+- Gateway services are process-wide singletons (`ServiceInstances`, exported), so `new DefaultJsonRpcRequestHandler()` reaches the same instances as the UI. No fragment needed.
+- **Never call a service before the UI's `Init`**: it would create the singleton without dependencies and the UI's `setServiceDependency` then throws. `/rpc` returns 503 until `ServiceInstances.areServicesInitialized()`.
+- **The gateway is single-client; `/rpc` must be an allowlist, not a pass-through.** `WorkflowService.getWorkflow` commits to a per-workflow snapshot repo that keeps only 1 snapshot, evicting the UI's; the UI's next change event then fails and the editor freezes (seen in testing). `ApplicationService.getState` replaces the UI's app-state diff baseline. Allowed for now: `executeWorkflowCommand`, `undo/redoWorkflowCommand`. Reads go via our own `/api/projects` and `/api/workflow`, which build entities directly (`EntityFactory`) without committing. Every gateway method added to the allowlist needs its side effects checked first.
+- JDK `HttpServer` rather than Jetty: no dependencies, no clash with the platform's Jetty 12.
+- Plugin dependency ranges pinned to `[5.12.0,5.13.0)` because this is internal API.
+
 ### M2: Core API
 - `/api` endpoints: open/save workflow, get/set node settings (JSON ⇄ `NodeSettings`), paged port tables + specs, node messages, flow variables
-- Change detection by polling snapshot IDs
+- Change detection by polling `contentHash` from `/api/workflow` (gateway snapshot IDs aren't usable without side effects)
 - API version + KNIME version in `status`
 
 ### M3: TS client + CLI
@@ -48,5 +55,5 @@ Temurin 21, Eclipse 2025-06 RCP, `knime-sdk-setup` (branch `releases/2026-06`, `
 
 ## Later / open questions
 - Push events (hooking the gateway event consumer) instead of polling
-- Check whether KNIME ships an official MCP / automation API first
+- Official KNIME MCP (checked 2026-11): Business Hub only (exposes deployed workflows); nothing drives the local AP editor
 - Agent edits share the user's undo history: how to show this in the UI
