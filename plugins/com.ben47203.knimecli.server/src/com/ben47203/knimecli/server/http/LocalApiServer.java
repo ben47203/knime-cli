@@ -1,4 +1,4 @@
-package com.ben47203.knimecli.server;
+package com.ben47203.knimecli.server.http;
 
 import java.io.IOException;
 import java.io.InputStream;

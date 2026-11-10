@@ -1,4 +1,4 @@
-package com.ben47203.knimecli.server;
+package com.ben47203.knimecli.server.api;
 
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -13,8 +13,8 @@ import org.knime.gateway.api.webui.util.WorkflowBuildContext;
 import org.knime.gateway.impl.project.Project;
 import org.knime.gateway.impl.project.ProjectManager;
 
-import com.ben47203.knimecli.server.Endpoint.NoArgs;
-import com.ben47203.knimecli.server.WorkflowEndpoint.WorkflowTarget;
+import com.ben47203.knimecli.server.api.Endpoint.NoArgs;
+import com.ben47203.knimecli.server.api.WorkflowEndpoint.WorkflowTarget;
 
 /**
  * Read endpoints that build gateway entities directly, without the gateway services' side effects. Unlike

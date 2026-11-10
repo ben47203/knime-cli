@@ -1,4 +1,4 @@
-package com.ben47203.knimecli.server;
+package com.ben47203.knimecli.server.http;
 
 import java.io.IOException;
 import java.util.Set;
@@ -22,7 +22,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
  * app-state diff baseline. So this is an allowlist, not a denylist: anything not known to be safe is refused.
  * Reads go through our own side-effect-free {@code /api/*} endpoints instead.
  */
-final class RpcAllowlist implements LocalApiServer.RpcHandler {
+public final class RpcAllowlist implements LocalApiServer.RpcHandler {
 
     /**
      * Verified safe: these run through the shared command stack (so the UI can undo them) and change the workflow
@@ -45,7 +45,7 @@ final class RpcAllowlist implements LocalApiServer.RpcHandler {
     private final ObjectMapper m_mapper = new ObjectMapper()
         .enable(DeserializationFeature.FAIL_ON_READING_DUP_TREE_KEY, DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
 
-    RpcAllowlist(final LocalApiServer.RpcHandler delegate) {
+    public RpcAllowlist(final LocalApiServer.RpcHandler delegate) {
         m_delegate = delegate;
     }
 

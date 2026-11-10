@@ -1,8 +1,8 @@
-package com.ben47203.knimecli.server;
+package com.ben47203.knimecli.server.api;
 
 import org.knime.gateway.api.entity.NodeIDEnt;
 
-import com.ben47203.knimecli.server.LocalApiServer.ApiException;
+import com.ben47203.knimecli.server.http.LocalApiServer.ApiException;
 
 /** Validation helpers for request records. Compact constructors throw {@link IllegalArgumentException} (→ 400). */
 final class Requests {

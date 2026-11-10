@@ -1,11 +1,11 @@
-package com.ben47203.knimecli.server;
+package com.ben47203.knimecli.server.api;
 
 import org.knime.core.node.workflow.WorkflowManager;
 import org.knime.gateway.api.entity.NodeIDEnt;
 import org.knime.gateway.impl.project.ProjectManager;
 import org.knime.gateway.impl.service.util.DefaultServiceUtil;
 
-import com.ben47203.knimecli.server.LocalApiServer.ApiException;
+import com.ben47203.knimecli.server.http.LocalApiServer.ApiException;
 
 /**
  * An endpoint scoped to one workflow (a project's root, or a metanode/component inside it). Resolves the

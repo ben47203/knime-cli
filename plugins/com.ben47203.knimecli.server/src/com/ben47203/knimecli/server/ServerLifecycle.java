@@ -5,13 +5,15 @@ import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
 
 import org.knime.core.node.KNIMEConstants;
 import org.knime.core.node.NodeLogger;
 import org.knime.gateway.impl.webui.jsonrpc.DefaultJsonRpcRequestHandler;
 import org.knime.gateway.impl.webui.service.ServiceInstances;
+
+import com.ben47203.knimecli.server.api.ApiRoutes;
+import com.ben47203.knimecli.server.http.LocalApiServer;
+import com.ben47203.knimecli.server.http.RpcAllowlist;
 
 /**
  * Wires the {@link LocalApiServer} to KNIME's gateway and owns its start/stop.
@@ -46,7 +48,7 @@ final class ServerLifecycle {
             info.put("pid", pid);
 
             var handler = new DefaultJsonRpcRequestHandler(); // services resolved lazily, safe before UI init
-            var s = new LocalApiServer(new RpcAllowlist(handler::handle), routes(GatewayReadApi.endpoints()), //
+            var s = new LocalApiServer(new RpcAllowlist(handler::handle), ApiRoutes.all(), //
                 ServerLifecycle::isGatewayReady, info, token, new Log());
             s.start();
 
@@ -67,17 +69,6 @@ final class ServerLifecycle {
             LOGGER.error("Failed to start knime-cli API server", e);
             stop();
         }
-    }
-
-    private static Map<String, LocalApiServer.ApiHandler> routes(final List<Endpoint<?>> endpoints) {
-        // A plain loop: Eclipse's compiler can't infer the method-ref-returning lambda inside Collectors.toMap.
-        var routes = new LinkedHashMap<String, LocalApiServer.ApiHandler>();
-        for (var e : endpoints) {
-            if (routes.put(e.path(), e::handle) != null) {
-                throw new IllegalStateException("Duplicate route " + e.path());
-            }
-        }
-        return routes;
     }
 
     static synchronized void stop() {

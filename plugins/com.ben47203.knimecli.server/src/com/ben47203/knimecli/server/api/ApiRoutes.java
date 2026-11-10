@@ -1,0 +1,30 @@
+package com.ben47203.knimecli.server.api;
+
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+import com.ben47203.knimecli.server.http.LocalApiServer.ApiHandler;
+
+/** The {@code /api/*} routes, keyed by path. The only public entry point into this package. */
+public final class ApiRoutes {
+
+    private ApiRoutes() {
+    }
+
+    /** All routes; fails fast if two endpoints claim the same path. */
+    public static Map<String, ApiHandler> all() {
+        return routes(GatewayReadApi.endpoints());
+    }
+
+    private static Map<String, ApiHandler> routes(final List<Endpoint<?>> endpoints) {
+        // A plain loop: Eclipse's compiler can't infer the method-ref-returning lambda inside Collectors.toMap.
+        var routes = new LinkedHashMap<String, ApiHandler>();
+        for (var e : endpoints) {
+            if (routes.put(e.path(), e::handle) != null) {
+                throw new IllegalStateException("Duplicate route " + e.path());
+            }
+        }
+        return routes;
+    }
+}

@@ -9,6 +9,8 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.Map;
 
+import com.ben47203.knimecli.server.http.Json;
+
 /**
  * Writes {@code ~/.knime-cli/instances/<pid>.json} so clients (CLI, MCP etc - just non-KNIME runtime) 
  * can find this instance. The file holds the bearer token,

@@ -1,8 +1,8 @@
-package com.ben47203.knimecli.server;
+package com.ben47203.knimecli.server.api;
 
 import org.knime.gateway.json.util.ObjectMapperUtil;
 
-import com.ben47203.knimecli.server.LocalApiServer.ApiException;
+import com.ben47203.knimecli.server.http.LocalApiServer.ApiException;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;

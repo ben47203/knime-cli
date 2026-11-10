@@ -1,15 +1,15 @@
-package com.ben47203.knimecli.server;
+package com.ben47203.knimecli.server.http;
 
 import java.util.Map;
 import java.util.stream.Collectors;
 
 /** Tiny JSON writer for flat objects of strings, numbers, booleans and nulls. Avoids a Jackson dependency. */
-final class Json {
+public final class Json {
 
     private Json() {
     }
 
-    static String object(final Map<String, ?> fields) {
+    public static String object(final Map<String, ?> fields) {
         return fields.entrySet().stream() //
             .map(e -> string(e.getKey()) + ":" + value(e.getValue())) //
             .collect(Collectors.joining(",", "{", "}"));
