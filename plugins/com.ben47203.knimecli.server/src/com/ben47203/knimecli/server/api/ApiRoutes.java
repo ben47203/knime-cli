@@ -18,6 +18,7 @@ public final class ApiRoutes {
         var endpoints = new ArrayList<Endpoint<?>>(GatewayReadApi.endpoints());
         endpoints.addAll(StatusApi.endpoints());
         endpoints.addAll(ExecutionApi.endpoints());
+        endpoints.addAll(SettingsApi.endpoints());
         return routes(endpoints);
     }
 
