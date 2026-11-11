@@ -11,38 +11,38 @@ import com.ben47203.knimecli.server.http.LocalApiServer.ApiException;
  *
  * @param <Q> request type, which names the workflow and the node
  */
-abstract class NodeEndpoint<Q extends NodeEndpoint.NodeRef> extends WorkflowEndpoint<Q> {
+public abstract class NodeEndpoint<Q extends NodeEndpoint.NodeRef> extends WorkflowEndpoint<Q> {
 
     /** Implemented by request records that address a node. */
-    interface NodeRef extends WorkflowRef {
+    public interface NodeRef extends WorkflowRef {
         /** Gateway node id ({@code root:3}) of a node directly inside the addressed workflow. */
         String nodeId();
     }
 
     /** Request that names a node and nothing else. */
-    record NodeTarget(String projectId, String workflowId, String nodeId) implements NodeRef {
-        NodeTarget {
+    public record NodeTarget(String projectId, String workflowId, String nodeId) implements NodeRef {
+        public NodeTarget {
             Requests.require(projectId, "projectId");
             Requests.require(nodeId, "nodeId");
         }
     }
 
-    NodeEndpoint(final String path, final Tier tier, final Class<Q> requestType) {
+    protected NodeEndpoint(final String path, final Tier tier, final Class<Q> requestType) {
         super(path, tier, requestType);
     }
 
     @Override
-    final Object execute(final WorkflowManager wfm, final Q request) throws Exception {
+    protected final Object execute(final WorkflowManager wfm, final Q request) throws Exception {
         return execute(wfm, resolveNode(wfm, request.nodeId(), "nodeId"), request);
     }
 
-    abstract Object execute(WorkflowManager wfm, NodeContainer nc, Q request) throws Exception; // NOSONAR
+    protected abstract Object execute(WorkflowManager wfm, NodeContainer nc, Q request) throws Exception; // NOSONAR
 
     /**
      * The node with the given gateway id, which must sit directly in {@code wfm}: a node deeper down is addressed by
      * naming its metanode/component as the {@code workflowId}, which keeps every id unambiguous.
      */
-    static NodeContainer resolveNode(final WorkflowManager wfm, final String nodeId, final String field)
+    public static NodeContainer resolveNode(final WorkflowManager wfm, final String nodeId, final String field)
         throws ApiException {
         var id = NodeIds.parse(nodeId, field, wfm);
         return wfm.tryGetNodeContainer(id)

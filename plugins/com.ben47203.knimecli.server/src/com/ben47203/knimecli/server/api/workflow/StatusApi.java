@@ -1,4 +1,4 @@
-package com.ben47203.knimecli.server.api;
+package com.ben47203.knimecli.server.api.workflow;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -9,18 +9,22 @@ import org.knime.core.node.workflow.NodeMessage;
 import org.knime.core.node.workflow.SubNodeContainer;
 import org.knime.core.node.workflow.WorkflowManager;
 
+import com.ben47203.knimecli.server.api.Endpoint;
+import com.ben47203.knimecli.server.api.NodeEndpoint;
 import com.ben47203.knimecli.server.api.NodeEndpoint.NodeTarget;
+import com.ben47203.knimecli.server.api.NodeStates;
 import com.ben47203.knimecli.server.api.NodeStates.NodeState;
+import com.ben47203.knimecli.server.api.WorkflowEndpoint;
 import com.ben47203.knimecli.server.api.WorkflowEndpoint.WorkflowTarget;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 /** Node and workflow state, read from core {@link WorkflowManager} calls without changing anything. */
-final class StatusApi {
+public final class StatusApi {
 
     private StatusApi() {
     }
 
-    static List<Endpoint<?>> endpoints() {
+    public static List<Endpoint<?>> endpoints() {
         return List.of(new NodeStatus(), new WorkflowState(), new WorkflowErrors());
     }
 
@@ -35,7 +39,7 @@ final class StatusApi {
         }
 
         @Override
-        Object execute(final WorkflowManager wfm, final NodeContainer nc, final NodeTarget request) {
+        protected Object execute(final WorkflowManager wfm, final NodeContainer nc, final NodeTarget request) {
             var ports = new ArrayList<Port>();
             for (var i = 0; i < nc.getNrOutPorts(); i++) {
                 var port = nc.getOutPort(i);
@@ -54,7 +58,7 @@ final class StatusApi {
         }
 
         @Override
-        Object execute(final WorkflowManager wfm, final WorkflowTarget request) throws Exception {
+        protected Object execute(final WorkflowManager wfm, final WorkflowTarget request) throws Exception {
             var nodes = NodeStates.children(wfm).stream().map(NodeStates::describe).toList();
             var res = new LinkedHashMap<String, Object>();
             res.put("stateHash", NodeStates.stateHash(nodes));
@@ -73,7 +77,7 @@ final class StatusApi {
         }
 
         @Override
-        Object execute(final WorkflowManager wfm, final WorkflowTarget request) {
+        protected Object execute(final WorkflowManager wfm, final WorkflowTarget request) {
             var nodes = new ArrayList<NodeState>();
             collectMessages(wfm, nodes);
             var errors = nodes.stream().filter(n -> NodeMessage.Type.ERROR.name().equals(n.message().type())).count();

@@ -1,4 +1,4 @@
-package com.ben47203.knimecli.server.api;
+package com.ben47203.knimecli.server.api.settings;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -11,10 +11,15 @@ import org.knime.core.node.workflow.NodeContainer;
 import org.knime.core.node.workflow.SubNodeContainer;
 import org.knime.core.node.workflow.WorkflowManager;
 
+import com.ben47203.knimecli.server.api.Endpoint;
+import com.ben47203.knimecli.server.api.NodeEndpoint;
 import com.ben47203.knimecli.server.api.NodeEndpoint.NodeRef;
 import com.ben47203.knimecli.server.api.NodeEndpoint.NodeTarget;
+import com.ben47203.knimecli.server.api.NodeIds;
+import com.ben47203.knimecli.server.api.NodeStates;
 import com.ben47203.knimecli.server.api.NodeStates.Message;
 import com.ben47203.knimecli.server.api.NodeStates.State;
+import com.ben47203.knimecli.server.api.Requests;
 import com.ben47203.knimecli.server.http.LocalApiServer.ApiException;
 import com.fasterxml.jackson.databind.JsonNode;
 
@@ -22,7 +27,7 @@ import com.fasterxml.jackson.databind.JsonNode;
  * Node settings as JSON, via core {@link NodeContainer#getNodeSettings()}: the same settings a dialog's Apply writes,
  * minus passwords and credentials (see {@link Secrets}).
  */
-final class SettingsApi {
+public final class SettingsApi {
 
     /** The node's own settings, as passed to {@code NodeModel.loadSettingsFrom}. */
     static final String MODEL = "model";
@@ -33,7 +38,7 @@ final class SettingsApi {
     private SettingsApi() {
     }
 
-    static List<Endpoint<?>> endpoints() {
+    public static List<Endpoint<?>> endpoints() {
         return List.of(new GetSettings(), new SetSettings());
     }
 
@@ -53,7 +58,7 @@ final class SettingsApi {
         }
 
         @Override
-        Object execute(final WorkflowManager wfm, final NodeContainer nc, final NodeTarget request)
+        protected Object execute(final WorkflowManager wfm, final NodeContainer nc, final NodeTarget request)
             throws ApiException {
             var kind = kind(nc);
             var settings = nc.getNodeSettings(); // fills in defaults for nodes that were never configured
@@ -100,7 +105,7 @@ final class SettingsApi {
 
         @Override
         @SuppressWarnings("try") // the lock is held, not used
-        Object execute(final WorkflowManager wfm, final NodeContainer nc, final SetRequest request)
+        protected Object execute(final WorkflowManager wfm, final NodeContainer nc, final SetRequest request)
             throws ApiException {
             kind(nc);
             boolean changed;

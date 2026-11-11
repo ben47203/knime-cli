@@ -13,10 +13,10 @@ import com.ben47203.knimecli.server.http.LocalApiServer.ApiException;
  *
  * @param <Q> request type, which names the workflow
  */
-abstract class WorkflowEndpoint<Q extends WorkflowEndpoint.WorkflowRef> extends Endpoint<Q> {
+public abstract class WorkflowEndpoint<Q extends WorkflowEndpoint.WorkflowRef> extends Endpoint<Q> {
 
     /** Implemented by request records that address a workflow. */
-    interface WorkflowRef {
+    public interface WorkflowRef {
         /** Id of a project open in the UI, see {@code /api/projects}. */
         String projectId();
 
@@ -25,22 +25,22 @@ abstract class WorkflowEndpoint<Q extends WorkflowEndpoint.WorkflowRef> extends 
     }
 
     /** Request that names a workflow and nothing else. */
-    record WorkflowTarget(String projectId, String workflowId) implements WorkflowRef {
-        WorkflowTarget {
+    public record WorkflowTarget(String projectId, String workflowId) implements WorkflowRef {
+        public WorkflowTarget {
             Requests.require(projectId, "projectId");
         }
     }
 
-    WorkflowEndpoint(final String path, final Tier tier, final Class<Q> requestType) {
+    protected WorkflowEndpoint(final String path, final Tier tier, final Class<Q> requestType) {
         super(path, tier, requestType);
     }
 
     @Override
-    Object run(final Q request) throws Exception {
+    protected Object run(final Q request) throws Exception {
         return execute(resolveWorkflow(request), request);
     }
 
-    abstract Object execute(WorkflowManager wfm, Q request) throws Exception; // NOSONAR
+    protected abstract Object execute(WorkflowManager wfm, Q request) throws Exception; // NOSONAR
 
     /** Gateway id of the workflow a request addresses, defaulting to the project root. */
     static NodeIDEnt workflowIdEnt(final WorkflowRef ref) throws ApiException {

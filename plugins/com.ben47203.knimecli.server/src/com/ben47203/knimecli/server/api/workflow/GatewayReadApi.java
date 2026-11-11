@@ -1,8 +1,5 @@
-package com.ben47203.knimecli.server.api;
+package com.ben47203.knimecli.server.api.workflow;
 
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -13,7 +10,10 @@ import org.knime.gateway.api.webui.util.WorkflowBuildContext;
 import org.knime.gateway.impl.project.Project;
 import org.knime.gateway.impl.project.ProjectManager;
 
+import com.ben47203.knimecli.server.api.Endpoint;
 import com.ben47203.knimecli.server.api.Endpoint.NoArgs;
+import com.ben47203.knimecli.server.api.NodeStates;
+import com.ben47203.knimecli.server.api.WorkflowEndpoint;
 import com.ben47203.knimecli.server.api.WorkflowEndpoint.WorkflowTarget;
 
 /**
@@ -21,12 +21,12 @@ import com.ben47203.knimecli.server.api.WorkflowEndpoint.WorkflowTarget;
  * {@code WorkflowService.getWorkflow}, nothing is committed to the shared snapshot repository, so the KNIME UI's change
  * tracking is untouched. See {@link RpcAllowlist}.
  */
-final class GatewayReadApi {
+public final class GatewayReadApi {
 
     private GatewayReadApi() {
     }
 
-    static List<Endpoint<?>> endpoints() {
+    public static List<Endpoint<?>> endpoints() {
         return List.of(new Projects(), new Workflow());
     }
 
@@ -37,7 +37,7 @@ final class GatewayReadApi {
         }
 
         @Override
-        Object run(final NoArgs request) {
+        protected Object run(final NoArgs request) {
             var pm = ProjectManager.getInstance();
             List<Map<String, Object>> projects = pm.getProjectIds().stream().<Map<String, Object>> map(id -> {
                 var p = new LinkedHashMap<String, Object>();
@@ -59,19 +59,15 @@ final class GatewayReadApi {
         }
 
         @Override
-        Object execute(final WorkflowManager wfm, final WorkflowTarget request) throws Exception {
+        protected Object execute(final WorkflowManager wfm, final WorkflowTarget request) throws Exception {
             // Builds under the workflow lock; no snapshot commit, no UI-visible state change.
             var workflow = EntityFactory.Workflow.buildWorkflowEnt(wfm,
                 WorkflowBuildContext.builder().includeInteractionInfo(false));
             var workflowJson = RESPONSE_MAPPER.valueToTree(workflow);
             var res = new LinkedHashMap<String, Object>();
-            res.put("contentHash", sha256(RESPONSE_MAPPER.writeValueAsBytes(workflowJson)));
+            res.put("contentHash", NodeStates.sha256(RESPONSE_MAPPER.writeValueAsBytes(workflowJson)));
             res.put("workflow", workflowJson);
             return res;
         }
-    }
-
-    static String sha256(final byte[] bytes) throws NoSuchAlgorithmException {
-        return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
     }
 }

@@ -15,7 +15,7 @@ import com.ben47203.knimecli.server.http.LocalApiServer.ApiException;
  * Both directions go through the project workflow, the way the gateway's own entity factories do: the gateway form
  * drops the project's own id prefix, plus the extra {@code 0} level of a component project.
  */
-final class NodeIds {
+public final class NodeIds {
 
     private NodeIds() {
     }
@@ -26,7 +26,7 @@ final class NodeIds {
     }
 
     /** Gateway id string of a node, as used in responses. */
-    static String toId(final NodeContainer nc) {
+    public static String toId(final NodeContainer nc) {
         return toEnt(nc).toString();
     }
 

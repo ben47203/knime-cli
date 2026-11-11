@@ -5,9 +5,16 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import com.ben47203.knimecli.server.api.execution.ExecutionApi;
+import com.ben47203.knimecli.server.api.settings.SettingsApi;
+import com.ben47203.knimecli.server.api.workflow.GatewayReadApi;
+import com.ben47203.knimecli.server.api.workflow.StatusApi;
 import com.ben47203.knimecli.server.http.LocalApiServer.ApiHandler;
 
-/** The {@code /api/*} routes, keyed by path. The only public entry point into this package. */
+/**
+ * The {@code /api/*} routes, keyed by path. The entry point {@code http/} uses; the other public classes here are the
+ * shared framework for the feature subpackages.
+ */
 public final class ApiRoutes {
 
     private ApiRoutes() {

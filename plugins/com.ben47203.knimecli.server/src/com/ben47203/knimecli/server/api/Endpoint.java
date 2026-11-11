@@ -20,10 +20,10 @@ import com.fasterxml.jackson.databind.exc.ValueInstantiationException;
  *
  * @param <Q> request type, usually a record
  */
-abstract class Endpoint<Q> {
+public abstract class Endpoint<Q> {
 
     /** What a route can do; lets clients (and later the server) restrict agents to reads. */
-    enum Tier {
+    public enum Tier {
             /** No changes to workflows, settings or files. */
             READ,
             /** Changes workflows, settings or files. */
@@ -38,7 +38,7 @@ abstract class Endpoint<Q> {
             DeserializationFeature.FAIL_ON_READING_DUP_TREE_KEY, DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
 
     /** The gateway's mapper, so gateway entities serialise exactly as the UI sees them. */
-    static final ObjectMapper RESPONSE_MAPPER = ObjectMapperUtil.getInstance().getObjectMapper();
+    protected static final ObjectMapper RESPONSE_MAPPER = ObjectMapperUtil.getInstance().getObjectMapper();
 
     private final String m_path;
 
@@ -49,7 +49,7 @@ abstract class Endpoint<Q> {
     /**
      * @param path route path without the {@code /api/} prefix, e.g. {@code workflow/state}
      */
-    Endpoint(final String path, final Tier tier, final Class<Q> requestType) {
+    protected Endpoint(final String path, final Tier tier, final Class<Q> requestType) {
         m_path = "/api/" + path;
         m_tier = tier;
         m_requestType = requestType;
@@ -69,7 +69,7 @@ abstract class Endpoint<Q> {
     }
 
     /** Runs the endpoint for a parsed, validated request; throw {@link ApiException} for non-500 failures. */
-    abstract Object run(Q request) throws Exception; // NOSONAR: failures become 500s in one place
+    protected abstract Object run(Q request) throws Exception; // NOSONAR: failures become 500s in one place
 
     private Q parse(final byte[] body) throws ApiException {
         try {
@@ -92,6 +92,6 @@ abstract class Endpoint<Q> {
     }
 
     /** Request with no fields; send {@code {}}. */
-    record NoArgs() {
+    public record NoArgs() {
     }
 }

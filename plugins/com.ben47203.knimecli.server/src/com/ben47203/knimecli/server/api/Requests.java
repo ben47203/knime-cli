@@ -7,12 +7,12 @@ import org.knime.gateway.api.entity.NodeIDEnt;
 import com.ben47203.knimecli.server.http.LocalApiServer.ApiException;
 
 /** Validation helpers for request records. Compact constructors throw {@link IllegalArgumentException} (→ 400). */
-final class Requests {
+public final class Requests {
 
     private Requests() {
     }
 
-    static void require(final Object value, final String field) {
+    public static void require(final Object value, final String field) {
         if (value == null || (value instanceof String s && s.isBlank())) {
             throw new IllegalArgumentException(field + " is required");
         }
@@ -22,7 +22,7 @@ final class Requests {
      * An optional, non-empty list of ids. An empty list is rejected rather than read as "all": the caller most likely
      * meant to select something, and acting on the whole workflow by accident is the worse failure.
      */
-    static List<String> optionalIds(final List<String> ids, final String field) {
+    public static List<String> optionalIds(final List<String> ids, final String field) {
         if (ids == null) {
             return null; // NOSONAR: null means "not given", i.e. the whole workflow
         }

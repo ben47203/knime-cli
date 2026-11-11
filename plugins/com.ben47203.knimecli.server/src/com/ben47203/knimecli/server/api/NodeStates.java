@@ -1,7 +1,9 @@
 package com.ben47203.knimecli.server.api;
 
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.List;
 
 import org.knime.core.node.workflow.NodeContainer;
@@ -9,17 +11,18 @@ import org.knime.core.node.workflow.NodeContainerState;
 import org.knime.core.node.workflow.NodeMessage;
 import org.knime.core.node.workflow.WorkflowManager;
 
+
 /**
  * Describes nodes for agents: a small, closed set of states instead of KNIME's internal ones, plus the message and
  * timing a user would see in the UI. Reads core getters only, so it is cheap enough to poll.
  */
-final class NodeStates {
+public final class NodeStates {
 
     private NodeStates() {
     }
 
     /** Node state as the UI's traffic light shows it, collapsed from {@link NodeContainerState}. */
-    enum State {
+    public enum State {
             /** Not configured (red). */
             IDLE,
             /** Configured, ready to execute (amber). */
@@ -35,18 +38,18 @@ final class NodeStates {
     }
 
     /** A node's warning or error. */
-    record Message(String type, String text, String issue, List<String> resolutions) {
+    public record Message(String type, String text, String issue, List<String> resolutions) {
     }
 
     /**
      * What an agent needs to know about one node. {@code message} is omitted when there is none, and
      * {@code lastExecutionMs} when the node hasn't run since it was loaded or created.
      */
-    record NodeState(String nodeId, String name, State state, Message message, String progressMessage,
+    public record NodeState(String nodeId, String name, State state, Message message, String progressMessage,
         Long lastExecutionMs) {
     }
 
-    static State state(final NodeContainer nc) {
+    public static State state(final NodeContainer nc) {
         var s = nc.getNodeContainerState();
         // Order matters: waiting (marked or queued) is also "execution in progress".
         if (s.isExecuted()) {
@@ -64,12 +67,12 @@ final class NodeStates {
     }
 
     /** True while the node is marked, queued or executing, i.e. a wait on it isn't over yet. */
-    static boolean inProgress(final NodeContainer nc) {
+    public static boolean inProgress(final NodeContainer nc) {
         return nc.getNodeContainerState().isExecutionInProgress();
     }
 
     /** The node's warning or error, or null if it has none. */
-    static Message message(final NodeContainer nc) {
+    public static Message message(final NodeContainer nc) {
         var m = nc.getNodeMessage();
         if (m == null || m.getMessageType() == NodeMessage.Type.RESET || m.getMessage().isBlank()) {
             return null;
@@ -78,7 +81,7 @@ final class NodeStates {
             m.getResolutions().isEmpty() ? null : List.copyOf(m.getResolutions()));
     }
 
-    static NodeState describe(final NodeContainer nc) {
+    public static NodeState describe(final NodeContainer nc) {
         String progress = null;
         if (inProgress(nc) && nc.getProgressMonitor() != null) {
             progress = nc.getProgressMonitor().getMessage();
@@ -97,7 +100,7 @@ final class NodeStates {
      * isn't safe to iterate while the UI edits the workflow. The lock is held only for the copy.
      */
     @SuppressWarnings("try") // the lock is held, not used
-    static List<NodeContainer> children(final WorkflowManager wfm) {
+    public static List<NodeContainer> children(final WorkflowManager wfm) {
         try (var lock = wfm.lock()) {
             return List.copyOf(wfm.getNodeContainers());
         }
@@ -107,7 +110,7 @@ final class NodeStates {
      * Hash over ids, states and messages only, so a poller can tell "something ran, failed or was reset" apart from
      * layout edits (those change {@code contentHash} from {@code /api/workflow} instead).
      */
-    static String stateHash(final List<NodeState> nodes) throws NoSuchAlgorithmException {
+    public static String stateHash(final List<NodeState> nodes) throws NoSuchAlgorithmException {
         var sb = new StringBuilder();
         for (var n : nodes) {
             sb.append(n.nodeId()).append('\t').append(n.state());
@@ -116,6 +119,11 @@ final class NodeStates {
             }
             sb.append('\n');
         }
-        return GatewayReadApi.sha256(sb.toString().getBytes(StandardCharsets.UTF_8));
+        return sha256(sb.toString().getBytes(StandardCharsets.UTF_8));
+    }
+
+    /** Hex SHA-256 of {@code bytes}; used for the change-detection hashes clients poll. */
+    public static String sha256(final byte[] bytes) throws NoSuchAlgorithmException {
+        return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
     }
 }

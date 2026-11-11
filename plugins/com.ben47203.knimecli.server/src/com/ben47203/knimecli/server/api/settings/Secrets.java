@@ -1,4 +1,4 @@
-package com.ben47203.knimecli.server.api;
+package com.ben47203.knimecli.server.api.settings;
 
 import java.util.LinkedHashMap;
 import java.util.Map;

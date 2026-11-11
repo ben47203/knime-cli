@@ -1,4 +1,4 @@
-package com.ben47203.knimecli.server.api;
+package com.ben47203.knimecli.server.api.execution;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -13,10 +13,16 @@ import org.knime.core.node.workflow.NodeID;
 import org.knime.core.node.workflow.NodeMessage;
 import org.knime.core.node.workflow.WorkflowManager;
 
-import com.ben47203.knimecli.server.http.LocalApiServer.ApiException;
+import com.ben47203.knimecli.server.api.Endpoint;
+import com.ben47203.knimecli.server.api.NodeEndpoint;
+import com.ben47203.knimecli.server.api.NodeIds;
+import com.ben47203.knimecli.server.api.NodeStates;
 import com.ben47203.knimecli.server.api.NodeStates.Message;
 import com.ben47203.knimecli.server.api.NodeStates.State;
+import com.ben47203.knimecli.server.api.Requests;
+import com.ben47203.knimecli.server.api.WorkflowEndpoint;
 import com.ben47203.knimecli.server.api.WorkflowEndpoint.WorkflowRef;
+import com.ben47203.knimecli.server.http.LocalApiServer.ApiException;
 
 /**
  * Execution control, on core {@link WorkflowManager} calls only. The gateway's {@code changeNodeStates} is
@@ -27,7 +33,7 @@ import com.ben47203.knimecli.server.api.WorkflowEndpoint.WorkflowRef;
  * and return. {@code waitMs} turns that into a bounded long-poll on the HTTP worker thread (never the SWT thread),
  * sleeping without holding any lock.
  */
-final class ExecutionApi {
+public final class ExecutionApi {
 
     /** Upper bound for {@code waitMs}, so a waiting client can't hold a worker thread indefinitely. */
     static final int MAX_WAIT_MS = 30_000;
@@ -38,7 +44,7 @@ final class ExecutionApi {
     private ExecutionApi() {
     }
 
-    static List<Endpoint<?>> endpoints() {
+    public static List<Endpoint<?>> endpoints() {
         return List.of(new Execute(), new Wait(), new Cancel(), new Reset());
     }
 
@@ -86,7 +92,7 @@ final class ExecutionApi {
         }
 
         @Override
-        Object execute(final WorkflowManager wfm, final WaitRequest request) throws ApiException {
+        protected Object execute(final WorkflowManager wfm, final WaitRequest request) throws ApiException {
             var targets = targets(wfm, request.nodeIds());
             if (request.nodeIds() == null) {
                 wfm.executeAll();
@@ -104,7 +110,7 @@ final class ExecutionApi {
         }
 
         @Override
-        Object execute(final WorkflowManager wfm, final WaitRequest request) throws ApiException {
+        protected Object execute(final WorkflowManager wfm, final WaitRequest request) throws ApiException {
             return await(wfm, targets(wfm, request.nodeIds()), request.nodeIds() != null, request.waitMs());
         }
     }
@@ -119,7 +125,7 @@ final class ExecutionApi {
         }
 
         @Override
-        Object execute(final WorkflowManager wfm, final NodesRequest request) throws ApiException {
+        protected Object execute(final WorkflowManager wfm, final NodesRequest request) throws ApiException {
             var targets = targets(wfm, request.nodeIds());
             if (request.nodeIds() == null) {
                 wfm.cancelExecution();
@@ -142,7 +148,7 @@ final class ExecutionApi {
 
         @Override
         @SuppressWarnings("try") // the lock is held, not used
-        Object execute(final WorkflowManager wfm, final NodesRequest request) throws ApiException {
+        protected Object execute(final WorkflowManager wfm, final NodesRequest request) throws ApiException {
             var targets = targets(wfm, request.nodeIds());
             // Check and reset under one lock hold, so nothing can start executing in between.
             try (var lock = wfm.lock()) {
