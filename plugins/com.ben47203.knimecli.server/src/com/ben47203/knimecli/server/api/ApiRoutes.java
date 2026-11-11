@@ -17,6 +17,7 @@ public final class ApiRoutes {
     public static Map<String, ApiHandler> all() {
         var endpoints = new ArrayList<Endpoint<?>>(GatewayReadApi.endpoints());
         endpoints.addAll(StatusApi.endpoints());
+        endpoints.addAll(ExecutionApi.endpoints());
         return routes(endpoints);
     }
 

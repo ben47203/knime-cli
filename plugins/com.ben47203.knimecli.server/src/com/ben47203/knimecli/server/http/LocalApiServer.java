@@ -39,7 +39,8 @@ public final class LocalApiServer {
 
     private static final int MAX_BODY_BYTES = 16 * 1024 * 1024;
 
-    private static final int WORKER_THREADS = 4;
+    /** Room for a few long-polling clients (execution waits) without starving short requests. */
+    private static final int WORKER_THREADS = 8;
 
     /** Handles one raw JSON-RPC request; may return an empty array for notifications. */
     @FunctionalInterface

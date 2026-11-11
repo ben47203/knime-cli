@@ -1,5 +1,7 @@
 package com.ben47203.knimecli.server.api;
 
+import java.util.List;
+
 import org.knime.gateway.api.entity.NodeIDEnt;
 
 import com.ben47203.knimecli.server.http.LocalApiServer.ApiException;
@@ -14,6 +16,23 @@ final class Requests {
         if (value == null || (value instanceof String s && s.isBlank())) {
             throw new IllegalArgumentException(field + " is required");
         }
+    }
+
+    /**
+     * An optional, non-empty list of ids. An empty list is rejected rather than read as "all": the caller most likely
+     * meant to select something, and acting on the whole workflow by accident is the worse failure.
+     */
+    static List<String> optionalIds(final List<String> ids, final String field) {
+        if (ids == null) {
+            return null; // NOSONAR: null means "not given", i.e. the whole workflow
+        }
+        if (ids.isEmpty()) {
+            throw new IllegalArgumentException(field + " must not be empty; omit it to target the whole workflow");
+        }
+        for (var id : ids) {
+            require(id, field + " entry");
+        }
+        return List.copyOf(ids);
     }
 
     /** Parses a gateway node id such as {@code root:3} or {@code root:5:0:2}. */
