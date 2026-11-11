@@ -7,6 +7,7 @@
   "scripts": {
     "smoke": "node scripts/smoke.ts",
     "smoke:exec": "node scripts/smoke-exec.ts",
+    "test": "node --test --test-concurrency=1 'test/*.test.ts'",
     "typecheck": "tsc"
   },
   "devDependencies": {
