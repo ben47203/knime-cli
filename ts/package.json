@@ -6,6 +6,7 @@
   "engines": { "node": ">=23.6" },
   "scripts": {
     "smoke": "node scripts/smoke.ts",
+    "smoke:exec": "node scripts/smoke-exec.ts",
     "typecheck": "tsc"
   },
   "devDependencies": {
