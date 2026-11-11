@@ -105,7 +105,9 @@ describe("/api/workflow", () => {
   });
 
   test("malformed workflowId -> 400", async () => {
-    await expectHttpError(fx.client.api("/api/workflow", { ...fx.target, workflowId: "root:x" }), 400, "workflowId");
+    for (const workflowId of ["root:x", "garbage", "foo:3"]) {
+      await expectHttpError(fx.client.api("/api/workflow", { ...fx.target, workflowId }), 400, "workflowId");
+    }
   });
 });
 
@@ -131,9 +133,8 @@ describe("/api/node/status", () => {
   });
 
   test("malformed nodeId -> 400", async () => {
-    // NodeIDEnt only fails on non-numeric segments after the first colon; a string without a colon parses as the
-    // root id (so "garbage" is a 404, not a 400) and the prefix isn't checked.
-    for (const nodeId of ["root:x", "root:", "root:3:abc"]) {
+    // "garbage" and "foo:3" would parse as the root and root:3 without the server's own format check.
+    for (const nodeId of ["root:x", "root:", "root:3:abc", "garbage", "foo:3", "root:-1", " root:3"]) {
       await expectHttpError(fx.client.api("/api/node/status", { ...fx.target, nodeId }), 400, "nodeId");
     }
   });

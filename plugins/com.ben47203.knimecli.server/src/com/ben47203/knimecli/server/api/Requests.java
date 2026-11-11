@@ -1,6 +1,7 @@
 package com.ben47203.knimecli.server.api;
 
 import java.util.List;
+import java.util.regex.Pattern;
 
 import org.knime.gateway.api.entity.NodeIDEnt;
 
@@ -8,6 +9,9 @@ import com.ben47203.knimecli.server.http.LocalApiServer.ApiException;
 
 /** Validation helpers for request records. Compact constructors throw {@link IllegalArgumentException} (→ 400). */
 public final class Requests {
+
+    /** {@code root}, optionally followed by numeric levels. */
+    private static final Pattern NODE_ID = Pattern.compile("root(:\\d+)*");
 
     private Requests() {
     }
@@ -35,8 +39,15 @@ public final class Requests {
         return List.copyOf(ids);
     }
 
-    /** Parses a gateway node id such as {@code root:3} or {@code root:5:0:2}. */
+    /**
+     * Parses a gateway node id such as {@code root:3} or {@code root:5:0:2}. Checked against the format first:
+     * {@link NodeIDEnt} reads a string without a colon as the root and ignores the prefix, so {@code garbage} and
+     * {@code foo:3} would silently address the root and {@code root:3}.
+     */
     static NodeIDEnt nodeIdEnt(final String id, final String field) throws ApiException {
+        if (!NODE_ID.matcher(id).matches()) {
+            throw new ApiException(400, "Invalid " + field + ": " + id + "; expected root or root:<n>[:<n>...]");
+        }
         try {
             return new NodeIDEnt(id);
         } catch (RuntimeException e) { // NOSONAR: any parse failure is a client error
