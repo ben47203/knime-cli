@@ -39,11 +39,20 @@ Findings so far:
 - Change detection by polling `contentHash` from `/api/workflow` (gateway snapshot IDs aren't usable without side effects)
 - API version + KNIME version in `status`
 
+Findings so far:
+- **Settings go through `WorkflowManager.loadNodeSettings`, the same call a dialog's Apply makes.** The UI picks the change up as a normal workflow patch, and the gateway's snapshot repo isn't touched. Like Apply, it isn't undoable: no gateway command changes settings.
+- **Core always resets and reconfigures the node and its successors on load, even when nothing changed.** `node/settings/set` compares first and skips no-ops so executed results are kept, as the UI does.
+- **Loading needs the full settings structure** (`internal_node_subsettings`, `model`, `variables`); a missing section is wiped. So `set` patches the existing `model` in place and only changes keys that already exist.
+- **An open dialog isn't refreshed.** It keeps showing the old values, and applying from it overwrites our change. Close and reopen a node's dialog after changing its settings from outside.
+- **Secrets typed into a node sit in its raw settings**, as plain text (`xtransientstring`) or reversibly encrypted (`xpassword`). KNIME only hides them in its dialog layer, so we redact them by entry type and settings-model markers, and refuse writes to them. Detection by key name is best effort: legacy nodes may keep encrypted passwords as plain strings under generic keys, and secrets inside URLs, headers or code aren't detected.
+- **`variables` is read-only.** Binding a credentials config to a flow variable can replace or expose its password, so writing flow-variable bindings needs its own rules first.
+
 To investigate at the end of M2 (agent usefulness):
 - Node search + node descriptions as text, so agents aren't limited to factory class names they already know. The gateway's node repository search needs its side effects checked before it can join the allowlist.
 - Settings schemas for newer (JSON Forms) nodes, so agents can validate settings before applying them
 - Input specs (column names and types) from configured nodes, so column settings can be filled without executing upstream
 - Configure check: apply settings, read the node's warning, keep or revert
+- Flow-variable bindings through `node/settings/set`, with credentials configs excluded
 - Recent `knime.log` lines, per node or for the whole application
 - Workflow annotations and description, read and write
 
