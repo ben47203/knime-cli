@@ -39,6 +39,14 @@ Findings so far:
 - Change detection by polling `contentHash` from `/api/workflow` (gateway snapshot IDs aren't usable without side effects)
 - API version + KNIME version in `status`
 
+To investigate at the end of M2 (agent usefulness):
+- Node search + node descriptions as text, so agents aren't limited to factory class names they already know. The gateway's node repository search needs its side effects checked before it can join the allowlist.
+- Settings schemas for newer (JSON Forms) nodes, so agents can validate settings before applying them
+- Input specs (column names and types) from configured nodes, so column settings can be filled without executing upstream
+- Configure check: apply settings, read the node's warning, keep or revert
+- Recent `knime.log` lines, per node or for the whole application
+- Workflow annotations and description, read and write
+
 ### M3: TS client + CLI
 - Typed client (types from the `knime-ui` repo / gateway entities)
 - Instance discovery, auth, CLI commands for the M2 surface
