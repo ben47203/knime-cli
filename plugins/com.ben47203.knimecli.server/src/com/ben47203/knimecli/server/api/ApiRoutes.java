@@ -1,5 +1,6 @@
 package com.ben47203.knimecli.server.api;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -14,7 +15,9 @@ public final class ApiRoutes {
 
     /** All routes; fails fast if two endpoints claim the same path. */
     public static Map<String, ApiHandler> all() {
-        return routes(GatewayReadApi.endpoints());
+        var endpoints = new ArrayList<Endpoint<?>>(GatewayReadApi.endpoints());
+        endpoints.addAll(StatusApi.endpoints());
+        return routes(endpoints);
     }
 
     private static Map<String, ApiHandler> routes(final List<Endpoint<?>> endpoints) {

@@ -71,7 +71,7 @@ final class GatewayReadApi {
         }
     }
 
-    private static String sha256(final byte[] bytes) throws NoSuchAlgorithmException {
+    static String sha256(final byte[] bytes) throws NoSuchAlgorithmException {
         return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
     }
 }
