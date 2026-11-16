@@ -31,22 +31,33 @@ Every command takes `--json` (machine-readable output, errors included) and show
 - **Node states:** IDLE (not configurable yet), CONFIGURED, QUEUED, EXECUTING, EXECUTED, plus a warning or error message.
 - **Build progressively, in this order:** add → connect → **execute upstream** → read settings → patch settings → execute.
   - A node shows **empty settings** (`model: {}`) until its input has a table spec, and CSV Reader only provides a spec once it has run.
+  - Learners and predictors (the tree predictors in particular) show `{}` until they are **connected**; after connecting, their options appear.
   - So you can't configure a whole pipeline before running any of it. `knime apply` does this ordering for you.
 - **Factory ids** are long Java class names, e.g. `org.knime.base.node.preproc.filter.column.DataColumnSpecFilterNodeFactory`. The catalogue gives them friendly aliases (`column-filter`) and flags deprecated nodes.
 
 ## Settings {#settings}
 - `knime node settings <node>` returns `model` (the node's settings), `variables` (flow-variable bindings, read-only) and `redacted` (JSON Pointers of secrets replaced by `{"$redacted": true}`). By default it prints `model` as dot-paths: `a.b.c = value`. Keys containing `.`, `[`, `]`, `"`, `=` or `:` are quoted: `dataTypeSettings["org.knime.core.data.def.DoubleCell"].factoryID`.
-- `knime node set <node> path=value …` is a **partial patch of existing keys**. Values are JSON (`80`, `true`, `["a","b"]`), falling back to a plain string. Values are coerced to the existing entry's type, and the whole patch is all-or-nothing. A unique suffix is enough (`source.path.path=/x.csv`); the CLI says what it expanded it to.
-- Typed values: `path:int=3`, `path:string=80`, `path:string[]='["a","b"]'`, `path:config='{"k":1}'`, `path:json='{"a":1}'`. Leaf types are string, int, long, short, byte, double, float, boolean and char; any of them plus `[]` takes a JSON array, and `config`/`config[]` take objects. For a key that doesn't exist yet, a typed value is sent as `{"$type": "int", "value": 3}`, which newer servers use to create the key (an untyped unknown key is still rejected). `json` only parses the value and never wraps it.
+- `knime node set <node> path=value …` is a **partial patch**. Plain values (JSON: `80`, `true`, `["a","b"]`, else text) change **existing** keys and are coerced to the entry's type; the whole patch is all-or-nothing. A unique suffix is enough (`source.path.path=/x.csv`); the CLI says what it expanded it to.
+- **Typed values create keys or change a key's type:** `{"$type": "<type>", "value": …}` in a patch file or spec, or `path:<type>=value` on the command line.
+  - Leaf types: string (value may be null), int, long, short, byte, double, float, boolean, char. Coercion is strict: `1.0` isn't an int.
+  - Arrays: any leaf type plus `[]` (`string[]`, `boolean[]`), and `config[]` (an array of objects). Elements are plain values.
+  - `config`: a JSON object whose fields may be typed or plain; plain fields are inferred (string/null → string, boolean, integral → int, other number → double, object → config, a non-empty array of one kind → that type with `[]`). An empty or mixed array needs an explicit `$type`.
+  - Lists and groups grow one typed entry at a time: Column Renamer `renamings` takes `{"0": {"$type": "config", "value": {"oldName": "a", "newName": "b"}}, "1": …}`.
+  - An empty array on a fresh node reads back as a string array; give `boolean[]`, `config[]` etc. explicitly (GroupBy's `inclMissingVals`, `columnTypes`).
+  - Refused: secret-looking key names, `*_Internals` keys, anything inside credentials configs, and password types.
+  - On the command line, `path:json=…` only parses the value and never wraps it.
 - `set` **resets the node and everything downstream**, just like a dialog's Apply. It **can't be undone**. A dialog that's open in the UI keeps showing stale values, and applying it overwrites the change. A patch that matches the current settings is a no-op (`changed: false`) and keeps results. Use `--dry-run` to see the diff first.
 - **Secrets** (passwords, credentials, tokens typed into a node) are never returned and can't be set.
-- **Gotchas found by experience.** These are server bugs being fixed; the CLI hints at them until they're gone:
-  - **Hidden nulls:** keys whose value is null are missing from `get`, but `set` accepts them, e.g. Java Snippet `expression`, `header`, `replaced_column`, `return_type`, or a predictor's `custom_prediction_name`. The CLI sends a key it can't see, with a warning.
-  - **Partial model:** if a node's own save throws, `get` returns a cut-off model. All regression tree learners do this, because their split criterion is null by default. Newer servers flag it with `complete: false` and a `problem` naming the exception and the last key written; the CLI warns.
-  - **Keys can't be added:** lists and groups can't grow (`renamings/1` gives "unknown setting"), and empty arrays only accept strings. GroupBy and Pivot are effectively unconfigurable for now.
-  - **No discovery of valid values:** e.g. Missing Value handler ids are factory class names (`…handlers.MedianNumberMissingCellHandlerFactory`).
-  - **Misleading key names:** Java Snippet (simple) `append_column: true` actually means *replace*, so set it to false to append. Its expression needs a full statement, `return …;`, or it fails with a cryptic `"~"` error.
+- **Null values** appear as JSON `null` (e.g. Java Snippet `expression` on a fresh node, a predictor's `custom_prediction_name`).
+- **Incomplete reads:** if a node's own save throws, `get` still answers 200 but with `complete: false` and a `problem` naming the exception and the last key written. The fresh tree learners (random forest, gradient boosting, regression tree) do this because their split criterion is null: their read stops after `nrModels`, and the missing keys must be created with typed values **in one set**. `knime nodes info rf-learn` shows the full patch as a preset; after that the settings are complete and plain patches work.
+- **Gotchas found by experience:**
+  - **No discovery of valid values:** Missing Value handler ids are factory class names (`…handlers.MedianNumberMissingCellHandlerFactory`); GroupBy methods are ids like `Count` and `Mean_V4.6`.
+  - **Misleading key names:** Java Snippet (simple) `append_column: true` actually means *replace*, so set it to false to append. Its expression needs a full statement, `return …;`, or it fails with a cryptic `"~"` error. GroupBy's key is spelt `grouByColumns`.
+  - **Silent no-ops:** a Column Renamer entry with a wrong `oldName` passes the column through unrenamed, with no error or warning. Check the output column names downstream.
+  - **Generated names:** GroupBy names its outputs `<Method>(<column>)`, but Count's is `Count*(<column>)` (with an asterisk: it counts rows, missing values included); Mean's is `Mean(<column>)`.
+  - **Accepted but fails later:** GBT `alphaFraction: 1.0` passes the set, then execute fails with `Index N out of bounds for length N` (N = training rows). Keep it below 1 (default 0.95).
   - **Guessed defaults are often wrong:** learners guess a target column, Partitioning defaults to 70% with a random seed, and the tree learners pick the last numeric column. Always set target, seed and fraction explicitly.
+  - **Gradient boosting is sensitive to its settings** (California housing, 80/20 split): depth 4 at learning rate 0.1 and full data gave R² 0.812 at 100 trees, 0.842 at 500 and 0.847 at 1000; depth 6–8 or `dataFraction` 0.8 dropped it to about 0.79–0.80, and `minNodeSize`/`minChildSize` 20/10 to 0.801. Random forest: `Linear` column sampling at 0.33 per node (0.832) beat 0.5 slightly; 500 trees were no better than 300 but 3× slower. RProp MLP 2×32 neurons: 0.795 at 1000 iterations (about 90 s).
 
 ## Execution {#execution}
 - `knime run [nodes…]` executes the nodes (and whatever they need upstream), or the whole workflow, and waits. The server's `execute` waits at most 30 s, so the CLI loops on `wait` until `--timeout`.
@@ -54,6 +65,8 @@ Every command takes `--json` (machine-readable output, errors included) and show
 - `/rpc` workflow commands (add, connect, label, delete) normally answer in about 100 ms.
   - **504** means KNIME didn't confirm within 30 s. The command was *probably applied*, so re-read the workflow before retrying.
   - **503 "N earlier calls … unanswered"** means KNIME has stopped confirming commands. Stop, and ask the user to reopen the workflow or restart KNIME.
+- Long executes are fine: only gateway commands have the 30 s limit, and `run` keeps waiting (a 253 s MLP run never hit a 504).
+- **Tune cheaply:** changing a node's settings resets only its downstream branch, so re-running just the final node (e.g. the metrics writer) re-executes only what changed: 10–25 s per trial instead of a full rebuild.
 
 ## Errors {#errors}
 Errors come back with a stable exit code, a cause and a next step; with `--json` they're printed to stdout as `{"ok": false, "error": {"code", "message", "cause", "hint"}}`. The table below is generated from the CLI's error translations.
@@ -72,10 +85,11 @@ Settings keys verified in the dogfooding runs. `knime nodes info <alias>` has po
 - **Partitioning** (`partition`): `percentage`, `seed`.
 - **Linear and polynomial regression** (`linreg-learn`, `polyreg-learn`), predicted with `reg-predict`.
 - **RProp MLP** (`rprop-learn`, predicted with `mlp-predict`): needs the target scaled to [0,1] with a Normalizer (min-max) and has no column filter, so filter the columns upstream.
-- **Gradient Boosted Trees** (`gbt-learn`): use its own `gbt-predict`; the PMML predictor rejects its model.
+- **Tree learners** (`rf-learn`, `gbt-learn`, `rtree-learn`): wire first, then set the whole preset in one go (`knime nodes info rf-learn`); their models are on port 3 (random forest) and port 1 (the others). Predict with their own predictors (`rf-predict`, `gbt-predict`, `rtree-predict`); the PMML predictor rejects these models.
 - **Column Appender** (`column-appender`): use `add_port` for more than 2 inputs.
 - **Numeric Scorer** (`numeric-scorer`): gives R², RMSE and MAE.
-- **Group aggregates:** GroupBy is blocked for now. The workaround is a Group Loop (Group Loop Start → Statistics → Loop End) or running-total snippets.
+- **GroupBy** (`groupby`): `grouByColumns.InclList`, plus parallel arrays in `aggregationColumn` (`columnNames`, typed `columnTypes`, `aggregationMethod`, typed `inclMissingVals`); see the `aggregate` preset.
+- **Column Renamer** (`column-renamer`): typed `renamings` entries; see the `rename` preset, and check `oldName` exactly.
 
 ## Declarative pipelines {#apply}
 `knime apply pipeline.json` builds a pipeline from a spec, idempotently, keyed by label:
@@ -91,7 +105,8 @@ Settings keys verified in the dogfooding runs. `knime nodes info <alias>` has po
 }
 ```
 - Every node gets the label `<prefix><key>`. On a re-run, a node with that label and the same factory is reused; nodes with the prefix that the spec no longer has (or whose factory changed) are removed. Nothing without the prefix is touched.
-- Settings keys may be nested objects or dot-paths (suffixes allowed, as in `node set`). String values expand `${VAR}` and `${VAR:-default}` from the environment.
+- Settings keys may be nested objects or dot-paths (suffixes allowed, as in `node set`), and values may be typed (`{"$type": …}`). String values expand `${VAR}` and `${VAR:-default}` from the environment.
+- `"preset": {"name": "regression", "target": "y", "exclude": ["id"]}` (or just `"preset": "regression"`) starts from a catalogue preset, built from its parameters; `settings` then override single keys, keeping the preset's `$type` where it has one. `knime nodes info <alias>` lists a node's presets and parameters.
 - Order: nodes are visited upstream first; each node's direct inputs are executed before its settings are patched, so the settings exist. Then `run` (default: every node without outgoing connections in the spec) is executed and checked like `knime run`.
 - `--dry-run` shows the structural plan (adds, reuses, removals, connections) without touching KNIME. `--rebuild` removes and re-adds every prefixed node.
 
