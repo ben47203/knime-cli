@@ -282,7 +282,7 @@ export const nodeSet: Command = {
     const r = await s.api<SetResult>("/api/node/settings/set", { nodeId: n.id, model: plan.patch }, `set ${n.id}`);
     if (r.changed) ctx.warn(resetNote);
     if (r.message?.type === "ERROR") ctx.warn(`${n.id} after set: ${r.message.text}`);
-    return {
+    if (r.complete === false) ctx.warn(`${n.id}'s settings are still incomplete after the set: ${r.problem ?? "the node's own save failed"}`);    return {
       data: { node: n.id, changed: r.changed, state: r.state, message: r.message, changes: plan.changes, resets: r.changed ? [n.id, ...downstream] : [] },
       text: [...diff, `${r.changed ? "changed" : "unchanged"}; ${n.id} is now ${r.state}${r.message ? ` (${r.message.type}: ${r.message.text})` : ""}`],
     };

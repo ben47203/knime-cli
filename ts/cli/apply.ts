@@ -391,9 +391,10 @@ export async function apply(session: Session, spec: ResolvedSpec, opts: ApplyOpt
         hint: node.inputs.length ? "Its inputs ran but gave it no table spec; check what they output." : "The node has no settings to set.",
       });
     }
-    if (current.complete === false) {
-      result.warnings.push(`${node.label}: settings are incomplete (${current.problem ?? "the node's save failed"}); patching may fail`);
-    }
+    // An incomplete read is expected on a fresh tree learner, and its preset completes it; only what's still
+    // incomplete after the set (or with nothing to set) is worth a warning.
+    let complete = current.complete !== false;
+    let problem = current.problem;
     let pp;
     try {
       pp = planObject(current.model, node.settings);
@@ -405,8 +406,14 @@ export async function apply(session: Session, spec: ResolvedSpec, opts: ApplyOpt
     if (Object.keys(pp.patch).length) {
       const r = await session.api<SetResult>("/api/node/settings/set", { nodeId: ids[node.key], model: pp.patch }, `set ${node.label}`);
       changed = r.changed;
+      complete = r.complete !== false;
+      problem = r.problem;
       if (r.message?.type === "ERROR") result.warnings.push(`${node.label} after set: ${r.message.text}`);
       if (changed) log(`set ${node.label}:\n  ${formatChanges(pp.changes.filter((c) => c.kind !== "same")).join("\n  ")}`);
+    }
+    if (!complete) {
+      result.warnings.push(`${node.label}: settings are still incomplete (${problem ?? "the node's own save failed"}); `
+        + `add the missing keys with typed values, or use a preset (\`knime nodes info ${node.entry?.alias ?? "<alias>"}\`)`);
     }
     // A changed node resets itself and everything downstream.
     if (changed) for (const k of [node.key, ...downstreamKeys(spec, node.key)]) executed.delete(ids[k] ?? "");
