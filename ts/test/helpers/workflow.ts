@@ -23,11 +23,15 @@ import type { AddNodeResult, CollapseResult, NodeStatus, WorkflowRead, WorkflowS
  * - COLUMN_FILTER: legacy NodeModel saving a DataColumnSpecFilterConfiguration under `column-filter`:
  *   `included_names`/`excluded_names` (string arrays), `filter-type`, `enforce_option` (strings) and `name_pattern`
  *   {`pattern`, `type` (strings), `caseSensitive`, `excludeMatching` (booleans)}. Data in port 1, data out port 1.
+ * - REGRESSION_TREE: treeensemble2 Simple Regression Tree Learner, whose TreeEnsembleLearnerConfiguration.save() throws
+ *   an NPE on its null split criterion after writing `nrModels`, so a fresh node's settings are incomplete. Its first
+ *   key, `targetColumn`, is a null string. `loadInModel` needs the keys in `TREE_COMPLETION` (settings.test.ts) too.
  */
 export const FACTORIES = {
   TABLE_CREATOR: "org.knime.base.node.io.tablecreator.TableCreator2NodeFactory",
   WAIT: "org.knime.base.node.flowcontrol.sleep.SleepNodeFactory",
   COLUMN_FILTER: "org.knime.base.node.preproc.filter.column.DataColumnSpecFilterNodeFactory",
+  REGRESSION_TREE: "org.knime.base.node.mine.treeensemble2.node.regressiontree.learner.RegressionTreeLearnerNodeFactory",
 } as const;
 
 /**

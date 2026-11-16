@@ -1,7 +1,6 @@
 package com.ben47203.knimecli.server.api.settings;
 
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -22,6 +21,9 @@ import org.knime.core.node.config.base.ConfigStringEntry;
 
 import com.ben47203.knimecli.server.http.LocalApiServer.ApiException;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 /**
  * Converts node settings to plain JSON and applies JSON patches back onto them, so agents can read and change
@@ -50,31 +52,42 @@ final class SettingsJson {
     /** How many existing keys to list in an "unknown setting" error before cutting the list short. */
     private static final int MAX_LISTED_KEYS = 25;
 
+    private static final JsonNodeFactory JSON = JsonNodeFactory.instance;
+
     private SettingsJson() {
     }
 
     /**
-     * {@code config} as JSON: a {@link LinkedHashMap} in KNIME's key order, or a {@link List} if the config is a KNIME
-     * array. Leaves become strings, numbers, booleans or null; non-finite doubles and floats become the strings
-     * {@code "NaN"}, {@code "Infinity"} and {@code "-Infinity"}, since JSON has no literal for them.
+     * {@code config} as JSON: an object in KNIME's key order, or an array if the config is a KNIME array. Leaves
+     * become strings, numbers, booleans or null; non-finite doubles and floats become the strings {@code "NaN"},
+     * {@code "Infinity"} and {@code "-Infinity"}, since JSON has no literal for them.
+     *
+     * <p>
+     * A Jackson tree rather than maps, because a tree keeps its null values whatever the serialisation inclusion of the
+     * mapper that writes it: the gateway's mapper drops nulls from maps, which hid settings that hold null.
      *
      * @param redactedPaths receives the JSON Pointer of every secret replaced by {@code {"$redacted": true}}
      * @param basePath JSON Pointer of {@code config} itself, {@code ""} for the root
      */
-    static Object toJson(final ConfigBaseRO config, final List<String> redactedPaths, final String basePath) {
+    static JsonNode toJson(final ConfigBaseRO config, final List<String> redactedPaths, final String basePath) {
         if (isArray(config)) {
             var size = arraySize(config);
-            var list = new ArrayList<>(size);
+            var list = JSON.arrayNode(size);
             for (var i = 0; i < size; i++) {
                 list.add(entryToJson(config, Integer.toString(i), redactedPaths, basePath));
             }
             return list;
         }
-        var map = new LinkedHashMap<String, Object>();
+        var map = JSON.objectNode();
         for (var key : config) {
-            map.put(key, entryToJson(config, key, redactedPaths, basePath));
+            map.set(key, entryToJson(config, key, redactedPaths, basePath));
         }
         return map;
+    }
+
+    /** An empty JSON object, for a node without a given settings section. */
+    static JsonNode emptyObject() {
+        return JSON.objectNode();
     }
 
     /**
@@ -102,12 +115,12 @@ final class SettingsJson {
 
     // ---- toJson ----
 
-    private static Object entryToJson(final ConfigBaseRO parent, final String key, final List<String> redactedPaths,
+    private static JsonNode entryToJson(final ConfigBaseRO parent, final String key, final List<String> redactedPaths,
         final String basePath) {
         var path = child(basePath, key);
         if (Secrets.isSecret(parent, key)) {
             redactedPaths.add(path);
-            return Map.of(REDACTED, true);
+            return JSON.objectNode().put(REDACTED, true);
         }
         var entry = Secrets.entry(parent, key);
         if (entry instanceof ConfigBase config) {
@@ -117,29 +130,28 @@ final class SettingsJson {
     }
 
     /** Value of a non-secret leaf. Secret types never get here, so the default branch never reads one. */
-    private static Object leafToJson(final AbstractConfigEntry entry) {
+    private static JsonNode leafToJson(final AbstractConfigEntry entry) {
         return switch (entry) {
-            case ConfigStringEntry e -> e.getString();
-            case ConfigIntEntry e -> e.getInt();
-            case ConfigLongEntry e -> e.getLong();
-            case ConfigShortEntry e -> e.getShort();
-            case ConfigByteEntry e -> e.getByte();
-            case ConfigDoubleEntry e -> finiteOrName(e.getDouble());
-            case ConfigFloatEntry e -> Float.isFinite(e.getFloat()) ? e.getFloat() : finiteOrName(e.getFloat());
-            case ConfigCharEntry e -> String.valueOf(e.getChar());
-            case ConfigBooleanEntry e -> e.getBoolean();
+            case ConfigStringEntry e -> e.getString() == null ? JSON.nullNode() : JSON.textNode(e.getString());
+            case ConfigIntEntry e -> JSON.numberNode(e.getInt());
+            case ConfigLongEntry e -> JSON.numberNode(e.getLong());
+            case ConfigShortEntry e -> JSON.numberNode(e.getShort());
+            case ConfigByteEntry e -> JSON.numberNode((int)e.getByte());
+            case ConfigDoubleEntry e -> Double.isFinite(e.getDouble()) ? JSON.numberNode(e.getDouble())
+                : nonFiniteName(e.getDouble());
+            case ConfigFloatEntry e -> Float.isFinite(e.getFloat()) ? JSON.numberNode(e.getFloat())
+                : nonFiniteName(e.getFloat());
+            case ConfigCharEntry e -> JSON.textNode(String.valueOf(e.getChar()));
+            case ConfigBooleanEntry e -> JSON.booleanNode(e.getBoolean());
             default -> throw new IllegalStateException("Unexpected settings entry type " + entry.getType());
         };
     }
 
-    private static Object finiteOrName(final double value) {
+    private static JsonNode nonFiniteName(final double value) {
         if (Double.isNaN(value)) {
-            return "NaN";
+            return JSON.textNode("NaN");
         }
-        if (Double.isInfinite(value)) {
-            return value > 0 ? "Infinity" : "-Infinity";
-        }
-        return value;
+        return JSON.textNode(value > 0 ? "Infinity" : "-Infinity");
     }
 
     /** True if {@code config}'s keys are exactly {@code array-size} (an int n ≥ 0) and "0".."n-1". */

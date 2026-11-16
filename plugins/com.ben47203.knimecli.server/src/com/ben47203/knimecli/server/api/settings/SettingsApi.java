@@ -2,7 +2,6 @@ package com.ben47203.knimecli.server.api.settings;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
 import org.knime.core.node.InvalidSettingsException;
 import org.knime.core.node.NodeSettings;
@@ -45,7 +44,7 @@ public final class SettingsApi {
     /**
      * A node's settings. {@code redacted} lists the JSON Pointers of secrets replaced by {@code {"$redacted": true}}.
      */
-    record Settings(String nodeId, String kind, Object model, Object variables, List<String> redacted) {
+    record Settings(String nodeId, String kind, JsonNode model, JsonNode variables, List<String> redacted) {
     }
 
     /**
@@ -84,7 +83,7 @@ public final class SettingsApi {
      * was left alone; otherwise it and its successors were reset and reconfigured, and {@code message} is the warning
      * or error configuring left on it.
      */
-    record SetResult(boolean changed, String nodeId, State state, Message message, Object model,
+    record SetResult(boolean changed, String nodeId, State state, Message message, JsonNode model,
         List<String> redacted) {
     }
 
@@ -173,10 +172,10 @@ public final class SettingsApi {
     }
 
     /** One top-level section as JSON, or an empty object if the node has none. */
-    private static Object section(final NodeSettings settings, final String key, final List<String> redacted) {
+    private static JsonNode section(final NodeSettings settings, final String key, final List<String> redacted) {
         if (Secrets.entry(settings, key) instanceof ConfigBase section) {
             return SettingsJson.toJson(section, redacted, SettingsJson.child("", key));
         }
-        return Map.of();
+        return SettingsJson.emptyObject();
     }
 }

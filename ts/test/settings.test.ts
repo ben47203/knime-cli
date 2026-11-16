@@ -1,8 +1,8 @@
 /**
  * Node settings read/write: /api/node/settings and /api/node/settings/set. Uses a Wait node (ints, a string), a Column
- * Filter (strings, booleans, string arrays, nested groups), a metanode made by collapsing a node, a slow Wait chain for
- * the 409 case, and a node with a password for redaction. Each test that changes settings restores them; teardown
- * removes the nodes regardless.
+ * Filter (strings, booleans, string arrays, nested groups), a Regression Tree Learner (null values, an incomplete read,
+ * typed values), a metanode made by collapsing a node, a slow Wait chain for the 409 case, and a node with a password
+ * for redaction. Each test that changes settings restores them; teardown removes the nodes regardless.
  */
 import assert from "node:assert/strict";
 import { after, before, describe, test } from "node:test";
@@ -254,6 +254,21 @@ describe("rejected patches (400, nothing changes)", () => {
     await expectHttpError(setSettings(wait, { for_minutes: 7, nope: 1 }), 400, "/model/nope");
     await expectHttpError(setSettings(wait, { for_minutes: 7, for_seconds: "x" }), 400, "/model/for_seconds");
     assert.deepEqual((await getSettings(wait)).model, before.model);
+  });
+});
+
+describe("null values, incomplete reads and typed values", () => {
+  let tree: string;
+
+  before(async () => {
+    tree = await wf.addNode(FACTORIES.REGRESSION_TREE, 4);
+  });
+
+  test("settings that hold null come back as null, not left out", async () => {
+    const s = await getSettings(tree);
+    assert.ok("targetColumn" in s.model, `targetColumn is listed; have: ${Object.keys(s.model).join(", ")}`);
+    assert.equal(s.model.targetColumn, null);
+    assert.equal(s.model.hardCodedRootColumn, null);
   });
 });
 
