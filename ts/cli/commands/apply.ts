@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 import { apply as applySpec, formatPlan, planApply, resolveSpec } from "../apply.ts";
-import { arg, seconds, type Command } from "../cli.ts";
+import { arg, seconds, str, type Command } from "../cli.ts";
 import { EXIT, usage } from "../errors.ts";
 import { formatReport } from "../execute.ts";
 
@@ -11,6 +11,7 @@ export const apply: Command = {
   summary: "Build a pipeline from a JSON spec, idempotently by label: add, connect, run upstream, patch, run",
   args: "<pipeline.json>",
   options: {
+    prefix: { type: "string", arg: "<label-prefix>", desc: "Use this label prefix instead of the spec's (e.g. to build a second copy)" },
     "dry-run": { type: "boolean", desc: "Show the structural plan; touch nothing" },
     rebuild: { type: "boolean", desc: "Remove and re-add every node with the prefix" },
     "no-run": { type: "boolean", desc: "Build and configure, but don't run the final nodes" },
@@ -30,6 +31,8 @@ export const apply: Command = {
     } catch (e) {
       throw usage(`Can't read ${file}: ${(e as Error).message}`);
     }
+    const prefix = str(ctx, "prefix");
+    if (prefix !== undefined && raw && typeof raw === "object") (raw as { prefix?: string }).prefix = prefix;
     const spec = resolveSpec(raw);
     const s = await ctx.session();
     if (ctx.values["dry-run"]) {
