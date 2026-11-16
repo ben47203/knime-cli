@@ -10,9 +10,13 @@ import java.security.MessageDigest;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 import java.util.regex.Pattern;
@@ -41,6 +45,16 @@ public final class LocalApiServer {
 
     /** Room for a few long-polling clients (execution waits) without starving short requests. */
     private static final int WORKER_THREADS = 8;
+
+    /**
+     * How long /rpc waits for the gateway. Commands normally return in well under a second, but the gateway waits for
+     * the workflow-change event confirming a command without a time limit, and if that event never fires the call
+     * would hang for good.
+     */
+    private static final long RPC_TIMEOUT_SECONDS = 30;
+
+    /** Gateway calls allowed to be unanswered at once; beyond this /rpc fails fast instead of piling up. */
+    private static final int MAX_PENDING_RPC = 4;
 
     /** Handles one raw JSON-RPC request; may return an empty array for notifications. */
     @FunctionalInterface
@@ -93,6 +107,12 @@ public final class LocalApiServer {
 
     private ExecutorService m_executor;
 
+    /** Runs gateway calls, so a hung call never holds an HTTP worker past {@link #RPC_TIMEOUT_SECONDS}. */
+    private ExecutorService m_rpcExecutor;
+
+    /** Gateway calls submitted and not yet returned, including timed-out ones still running. */
+    private final AtomicInteger m_pendingRpc = new AtomicInteger();
+
     private int m_port;
 
     /**
@@ -126,6 +146,12 @@ public final class LocalApiServer {
             return t;
         });
         server.setExecutor(m_executor);
+        var rpcCounter = new AtomicInteger();
+        m_rpcExecutor = Executors.newCachedThreadPool(r -> {
+            var t = new Thread(r, "knime-cli-rpc-" + rpcCounter.incrementAndGet());
+            t.setDaemon(true);
+            return t;
+        });
         server.createContext("/", this::handle);
         server.start();
         m_server = server;
@@ -139,6 +165,7 @@ public final class LocalApiServer {
         }
         m_server.stop(0);
         m_executor.shutdownNow();
+        m_rpcExecutor.shutdownNow();
         try {
             m_executor.awaitTermination(2, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
@@ -146,6 +173,7 @@ public final class LocalApiServer {
         }
         m_server = null;
         m_executor = null;
+        m_rpcExecutor = null;
         m_log.info("knime-cli: API stopped");
     }
 
@@ -253,14 +281,70 @@ public final class LocalApiServer {
             return;
         }
         var startNanos = System.nanoTime();
-        var response = m_rpc.handle(request);
+        var response = callGateway(ex, request);
+        if (response == null) {
+            return; // error already sent
+        }
         m_log.info("knime-cli: RPC " + rpcMethod(request) + " -> " + rpcOutcome(response) + " in "
             + (System.nanoTime() - startNanos) / 1_000_000 + " ms");
-        if (response == null || response.length == 0) {
+        if (response.length == 0 || response.length == 0) {
             ex.sendResponseHeaders(204, -1); // JSON-RPC notification: no response body
             return;
         }
         send(ex, 200, response);
+    }
+
+    /**
+     * Runs {@code request} through the gateway with a time limit. A call that times out is interrupted, which ends the
+     * gateway's wait for its confirming event; one that ignores the interrupt keeps counting as pending.
+     *
+     * @return the response, empty for a notification, or null if an error response has already been sent
+     */
+    private byte[] callGateway(final HttpExchange ex, final byte[] request) throws IOException {
+        if (m_pendingRpc.incrementAndGet() > MAX_PENDING_RPC) {
+            m_pendingRpc.decrementAndGet();
+            m_log.info("knime-cli: RPC " + rpcMethod(request) + " -> 503 (too many unanswered calls)");
+            ex.getResponseHeaders().set("Retry-After", "5");
+            sendError(ex, 503, MAX_PENDING_RPC + " earlier calls to KNIME are still unanswered, so it has probably"
+                + " stopped confirming commands. Close and reopen the workflow, or restart KNIME.");
+            return null;
+        }
+        Future<byte[]> future;
+        try {
+            future = m_rpcExecutor.submit(() -> {
+                try {
+                    var response = m_rpc.handle(request);
+                    return response == null ? new byte[0] : response;
+                } finally {
+                    m_pendingRpc.decrementAndGet();
+                }
+            });
+        } catch (RejectedExecutionException e) { // server stopping
+            m_pendingRpc.decrementAndGet();
+            sendError(ex, 503, "Server is stopping");
+            return null;
+        }
+        try {
+            return future.get(RPC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        } catch (TimeoutException e) {
+            future.cancel(true);
+            m_log.info("knime-cli: RPC " + rpcMethod(request) + " -> 504 (no answer in " + RPC_TIMEOUT_SECONDS + " s)");
+            sendError(ex, 504, "KNIME didn't confirm this call within " + RPC_TIMEOUT_SECONDS + " s. A workflow command"
+                + " has probably still been applied: check the workflow before retrying. If this keeps happening, close"
+                + " and reopen the workflow, or restart KNIME.");
+            return null;
+        } catch (InterruptedException e) {
+            future.cancel(true);
+            Thread.currentThread().interrupt();
+            sendError(ex, 503, "Server is stopping");
+            return null;
+        } catch (ExecutionException e) {
+            var cause = e.getCause();
+            if (cause instanceof RuntimeException re) {
+                throw re; // becomes a 500 in handle()
+            }
+            throw new IllegalStateException(cause);
+        }
     }
 
     private record Rejection(int status, String message) {
