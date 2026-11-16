@@ -257,6 +257,35 @@ describe("rejected patches (400, nothing changes)", () => {
   });
 });
 
+/** A typed patch value: creates the key, or replaces it with an entry of exactly this type. */
+function typed(type: string, value: Json): JsonObject {
+  return { $type: type, value };
+}
+
+/**
+ * What a fresh Regression Tree Learner's settings lack after its save stops at `nrModels`: the remaining keys of
+ * TreeEnsembleLearnerConfiguration.save(), with its dialog defaults. Also sets the target column, which loadInModel
+ * requires to be non-empty.
+ */
+const TREE_COMPLETION: JsonObject = {
+  targetColumn: "knime-cli-target",
+  splitCriterion: typed("string", "InformationGainRatio"),
+  missingValueHandling: typed("string", "XGBoost"),
+  useAverageSplitPoints: typed("boolean", true),
+  useBinaryNominalSplits: typed("boolean", true),
+  fingerprintColumn: typed("string", null),
+  columnFilterConfig: typed("config", {
+    "filter-type": "STANDARD",
+    included_names: typed("string[]", []),
+    excluded_names: typed("string[]", []),
+    enforce_option: "EnforceExclusion",
+  }),
+  ignoreColumnsWithoutDomain: typed("boolean", true),
+  nrHilitePatterns: typed("int", -1),
+  saveTargetDistributionInNodes: typed("boolean", false),
+  rowSamplingMode: typed("string", "Random"),
+};
+
 describe("null values, incomplete reads and typed values", () => {
   let tree: string;
 
@@ -283,6 +312,144 @@ describe("null values, incomplete reads and typed values", () => {
     const ok = await getSettings(wait);
     assert.equal(ok.complete, true);
     assert.equal(ok.problem, undefined);
+  });
+
+  test("a patch that leaves the settings incomplete is rejected with the reason", async () => {
+    await expectHttpError(
+      setSettings(tree, { targetColumn: "x", splitCriterion: typed("string", "InformationGainRatio") }),
+      400,
+      "rejected",
+      "failed to save its own settings",
+    );
+    assert.equal((await getSettings(tree)).complete, false, "nothing changed");
+  });
+
+  test("typed values add the missing keys, and the node loads them", async () => {
+    const set = await setSettings(tree, TREE_COMPLETION);
+    assert.equal(set.changed, true);
+    assert.equal(set.complete, true, set.problem);
+    assert.equal(set.model.splitCriterion, "InformationGainRatio");
+    assert.equal(set.model.targetColumn, "knime-cli-target");
+    assert.equal(set.model.fingerprintColumn, null);
+    assert.deepEqual(group(set.model, "columnFilterConfig").included_names, []);
+    const now = await getSettings(tree);
+    assert.equal(now.complete, true);
+    assert.equal(now.problem, undefined);
+    assert.deepEqual(now.model, set.model);
+    assert.equal(now.model.nrModels, 100, "keys the patch didn't name are kept");
+  });
+
+  // The tree learner ignores keys it doesn't know, so the tests below can add throwaway ones to it.
+  test("every typed leaf and array type", async () => {
+    const set = await setSettings(tree, {
+      kc_string: typed("string", "a"),
+      kc_int: typed("int", -3),
+      kc_long: typed("long", 2 ** 40),
+      kc_double: typed("double", 1.5),
+      kc_nan: typed("double", "NaN"),
+      kc_float: typed("float", 0.5),
+      kc_boolean: typed("boolean", true),
+      kc_char: typed("char", "x"),
+      kc_short: typed("short", 7),
+      kc_byte: typed("byte", -1),
+      kc_strings: typed("string[]", ["a", null]),
+      kc_ints: typed("int[]", [1, 2]),
+      kc_doubles: typed("double[]", [0.5, 2]),
+      kc_booleans: typed("boolean[]", [true, false]),
+      kc_configs: typed("config[]", [{ a: 1 }, { a: 2 }]),
+    });
+    assert.equal(set.complete, true, set.problem);
+    const m = set.model;
+    assert.deepEqual(
+      [m.kc_string, m.kc_int, m.kc_long, m.kc_double, m.kc_nan, m.kc_float, m.kc_boolean, m.kc_char, m.kc_short, m.kc_byte],
+      ["a", -3, 2 ** 40, 1.5, "NaN", 0.5, true, "x", 7, -1],
+    );
+    assert.deepEqual(m.kc_strings, ["a", null]);
+    assert.deepEqual(m.kc_ints, [1, 2]);
+    assert.deepEqual(m.kc_doubles, [0.5, 2]);
+    assert.deepEqual(m.kc_booleans, [true, false]);
+    assert.deepEqual(m.kc_configs, [{ a: 1 }, { a: 2 }]);
+    // Created entries have exactly the given type, so plain values are then held to it.
+    await expectHttpError(setSettings(tree, { kc_int: 1.5 }), 400, "/model/kc_int", "integer");
+    await expectHttpError(setSettings(tree, { kc_byte: 300 }), 400, "/model/kc_byte");
+    await expectHttpError(setSettings(tree, { kc_booleans: ["x"] }), 400, "/model/kc_booleans/0");
+    assert.equal((await setSettings(tree, { kc_booleans: [false] })).changed, true);
+  });
+
+  test("a typed config infers plain values, and can be grown key by key", async () => {
+    const value = { s: "a", n: null, b: true, i: 3, big: 2 ** 40, d: 1.5, ints: [1, 2], mixed: [1, 2.5], obj: { x: 1 } };
+    const set = await setSettings(tree, { kc_group: typed("config", value) });
+    assert.deepEqual(set.model.kc_group, value);
+    await expectHttpError(setSettings(tree, { kc_group: { i: 1.5 } }), 400, "/model/kc_group/i", "integer");
+    await expectHttpError(setSettings(tree, { kc_group: { b: "true" } }), 400, "/model/kc_group/b");
+
+    // Like a Column Renamer's `renamings`: a group of groups keyed 0, 1, ...
+    await setSettings(tree, { kc_list: typed("config", { "0": { oldName: "a", newName: "b" } }) });
+    await expectHttpError(
+      setSettings(tree, { kc_list: { "1": { oldName: "c", newName: "d" } } }),
+      400,
+      "Unknown setting /model/kc_list/1",
+      "existing keys: 0",
+      "$type",
+    );
+    const grown = await setSettings(tree, { kc_list: { "1": typed("config", { oldName: "c", newName: "d" }) } });
+    assert.deepEqual(grown.model.kc_list, { "0": { oldName: "a", newName: "b" }, "1": { oldName: "c", newName: "d" } });
+
+    // A DataType array, as GroupBy's aggregationColumn/columnTypes stores it.
+    const types = await setSettings(tree, {
+      kc_types: typed("config[]", [{ cell_class: "org.knime.core.data.def.DoubleCell", is_null: false }]),
+    });
+    assert.deepEqual(types.model.kc_types, [{ cell_class: "org.knime.core.data.def.DoubleCell", is_null: false }]);
+  });
+
+  test("an empty array takes only strings until given a type; any existing key can change type", async () => {
+    await setSettings(tree, { kc_flags: typed("string[]", []) });
+    await expectHttpError(setSettings(tree, { kc_flags: [true] }), 400, "/model/kc_flags/0", "string");
+    const filled = await setSettings(tree, { kc_flags: typed("boolean[]", [true, false]) });
+    assert.deepEqual(filled.model.kc_flags, [true, false]);
+
+    await setSettings(tree, { kc_changes: typed("int", 1) });
+    const changed = await setSettings(tree, { kc_changes: typed("string", "one") });
+    assert.equal(changed.model.kc_changes, "one");
+    const keys = Object.keys(changed.model);
+    await setSettings(tree, { kc_changes: typed("config", { a: 1 }) });
+    assert.deepEqual(Object.keys((await getSettings(tree)).model), keys, "a replaced key keeps its place");
+  });
+
+  test("typed creation refuses secret-looking keys, internals, password types and bad shapes", async () => {
+    const before = await getSettings(tree);
+    const refused: [JsonObject, ...string[]][] = [
+      [{ password: typed("string", "knime-cli-test") }, "/model/password", "can't be created"],
+      [{ apiToken: typed("string", "knime-cli-test") }, "/model/apiToken", "can't be created"],
+      [{ my_secret: typed("config", { a: 1 }) }, "/model/my_secret", "can't be created"],
+      [{ kc_cfg: typed("config", { token: "knime-cli-test" }) }, "/model/kc_cfg/token", "can't be created"],
+      [{ kc_cfg: typed("config", { inner: { passphrase: "knime-cli-test" } }) }, "/model/kc_cfg/inner/passphrase"],
+      [{ kc_cfg: typed("config[]", [{ pwd: "knime-cli-test" }]) }, "/model/kc_cfg/0/pwd"],
+      [{ kc_x_Internals: typed("config", { SettingsModelID: "SMID_password" }) }, "/model/kc_x_Internals"],
+      [{ kc_cfg: typed("config", { v: 1, v_Internals: { SettingsModelID: "SMID_password" } }) }, "/model/kc_cfg/v_Internals"],
+      [{ kc_pw: typed("password", "knime-cli-test") }, "/model/kc_pw", "passwords"],
+      [{ kc_pw: typed("transientstring", "knime-cli-test") }, "/model/kc_pw", "passwords"],
+      [{ kc_pw: typed("password[]", ["knime-cli-test"]) }, "/model/kc_pw", "passwords"],
+      [{ kc_bad: typed("nope", 1) }, "/model/kc_bad", "unknown type"],
+      [{ kc_bad: { $type: 3, value: 1 } }, "/model/kc_bad", "type name"],
+      [{ kc_bad: { $type: "int" } }, "/model/kc_bad", "exactly two fields"],
+      [{ kc_bad: { $type: "int", value: 1, extra: 1 } }, "/model/kc_bad", "exactly two fields"],
+      [{ kc_bad: typed("int", "1") }, "/model/kc_bad", "integer"],
+      [{ kc_bad: typed("string[]", "a") }, "/model/kc_bad", "JSON array"],
+      [{ kc_bad: typed("config", [1]) }, "/model/kc_bad", "JSON object"],
+      [{ kc_bad: typed("config", { e: [] }) }, "/model/kc_bad/e", "empty array"],
+      [{ kc_bad: typed("config", { m: [1, "a"] }) }, "/model/kc_bad/m", "mixed"],
+      [{ kc_bad: typed("int[]", [typed("int", 1)]) }, "/model/kc_bad/0"],
+      [{ kc_bad: typed("string", REDACTED) }, "/model/kc_bad", "redacted"],
+      [{ kc_bad: 1 }, "Unknown setting /model/kc_bad", "$type"],
+      // All-or-nothing: a valid typed key doesn't get through alongside a refused one.
+      [{ kc_fine: typed("int", 1), password: typed("string", "knime-cli-test") }, "/model/password"],
+    ];
+    for (const [patch, ...fragments] of refused) {
+      const e = await expectHttpError(setSettings(tree, patch), 400, ...fragments);
+      assert.doesNotMatch(e.message, /knime-cli-test/, "the rejected value isn't echoed");
+    }
+    assert.deepEqual((await getSettings(tree)).model, before.model, "refused patches changed nothing");
   });
 });
 
@@ -403,7 +570,8 @@ describe("secrets", () => {
     // The error names the secret, or the protected config (e.g. a Credentials widget) it sits in.
     const namesTargetOrAncestor = (message: string) =>
       segments(target).some((_, i, all) => message.includes("/" + all.slice(0, i + 1).join("/") + " "));
-    for (const value of ["knime-cli-test", REDACTED] as Json[]) {
+    // A typed value can't replace a secret either.
+    for (const value of ["knime-cli-test", REDACTED, typed("string", "knime-cli-test")] as Json[]) {
       const e = await expectHttpError(setSettings(node, patchAt(target, value)), 400);
       assert.ok(namesTargetOrAncestor(e.message), `error should name ${target} or a parent: ${e.message}`);
       assert.doesNotMatch(e.message, /knime-cli-test/, "the rejected value isn't echoed");
@@ -415,6 +583,10 @@ describe("secrets", () => {
     if (isObject(parentValue) && "isCredentials_Internals" in parentValue && "login" in parentValue) {
       const loginPointer = "/" + [...parent, "login"].map((s) => s.replace(/~/g, "~0").replace(/\//g, "~1")).join("/");
       await expectHttpError(setSettings(node, patchAt(loginPointer, "someone-else")), 400);
+      await expectHttpError(setSettings(node, patchAt(loginPointer, typed("string", "someone-else"))), 400);
+      // Nor can a key be created inside one.
+      const newPointer = "/" + [...parent, "kc_new"].map((s) => s.replace(/~/g, "~0").replace(/\//g, "~1")).join("/");
+      await expectHttpError(setSettings(node, patchAt(newPointer, typed("string", "x"))), 400);
     }
 
     assert.deepEqual((await getSettings(node)).model, settings.model, "refused patches changed nothing");

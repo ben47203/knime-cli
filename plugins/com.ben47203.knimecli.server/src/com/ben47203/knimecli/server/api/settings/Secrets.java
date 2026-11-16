@@ -115,6 +115,29 @@ final class Secrets {
     }
 
     /**
+     * Why a new entry {@code key} must not be added to {@code parent}, or null if it may. Stricter than
+     * {@link #isSecret}, since there is no entry yet whose type could vouch for it: refused are any key whose name looks
+     * like a secret's (configs included), settings-model {@code _Internals} keys (which could mark a sibling as a
+     * password, or unmark one), a key whose {@code _Internals} sibling already exists (it belongs to a settings
+     * model, which might be a password), and any key in a Credentials widget config.
+     */
+    static String whyNotCreatable(final ConfigBaseRO parent, final String key) {
+        if (key.endsWith(INTERNALS_SUFFIX)) {
+            return "settings-model internals can't be created";
+        }
+        if (SECRET_NAME.matcher(key).find()) {
+            return "the name looks like a password or credentials setting's";
+        }
+        if (parent.containsKey(key + INTERNALS_SUFFIX)) {
+            return "it belongs to a settings model whose " + key + INTERNALS_SUFFIX + " already exists";
+        }
+        if (parent.containsKey(CREDENTIALS_MARKER)) {
+            return "it would sit in a credentials config";
+        }
+        return null; // NOSONAR: null means "may be created"
+    }
+
+    /**
      * Every secret leaf under {@code root}, keyed by JSON Pointer relative to it. A secret config contributes all of
      * its leaves. Leaf entries are immutable, so the snapshot stays valid while {@code root} is changed; compare it
      * with {@link #sameSecrets(Map, ConfigBaseRO)}. The entries are for comparison only: never read their values.
