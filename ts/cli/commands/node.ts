@@ -220,7 +220,8 @@ export const nodeSet: Command = {
   notes: [
     "Values parse as JSON (80, true, [\"a\",\"b\"], null), else as text; an existing string setting stays a string.",
     "Types: string int long short byte double float boolean char, <type>[] (JSON array), config, config[], json.",
-    "A typed key the node doesn't have yet is sent as {\"$type\": <type>, \"value\": …}, which newer servers create.",
+    "A typed value creates the key, or changes its type: {\"$type\": <type>, \"value\": …}. A plain value for a key the",
+    "node doesn't have is rejected. For tree learners, GroupBy and Column Renamer, use --preset (see `knime nodes info`).",
     "A unique suffix is enough: source.path.path=/x.csv. The patch is all-or-nothing.",
     "WARNING: a change resets this node and everything downstream, and can't be undone. An open dialog for the",
     "node in KNIME keeps stale values; close it first. A patch that changes nothing keeps results.",
