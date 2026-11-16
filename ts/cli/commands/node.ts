@@ -3,10 +3,11 @@ import { readFile } from "node:fs/promises";
 import { byAlias, byFactory, isFactoryName, search } from "../catalogue.ts";
 import { arg, str, type Command, type Ctx } from "../cli.ts";
 import { CliError, EXIT, usage } from "../errors.ts";
-import { formatChanges, parseAssignment, planAssignments, planObject, PatchError, type PatchPlan } from "../patch.ts";
+import { coerce, formatChanges, parseAssignment, planAssignments, planObject, PatchError, type PatchPlan } from "../patch.ts";
 import { flatten, isObject } from "../paths.ts";
 import type { NodeView, Session } from "../session.ts";
-import type { JsonObject, SetResult, Settings } from "../types.ts";
+import { buildPreset } from "../presets.ts";
+import type { Json, JsonObject, SetResult, Settings } from "../types.ts";
 
 function resolveFactory(text: string): { factory: string; alias?: string } {
   const e = byAlias(text);
@@ -211,6 +212,8 @@ export const nodeSet: Command = {
   args: "<node> [path[:type]=value…]",
   options: {
     patch: { type: "string", arg: "<file.json>", desc: "A JSON object of settings to patch (nested or dot-path keys)" },
+    preset: { type: "string", arg: "<name>", desc: "Start from a catalogue preset for this node (see `knime nodes info <alias>`)" },
+    param: { type: "string", multiple: true, arg: "<k=v>", desc: "A preset parameter; JSON values, else text (repeatable)" },
     "dry-run": { type: "boolean", desc: "Show the diff and what would be reset, change nothing" },
     exact: { type: "boolean", desc: "Don't expand path suffixes; paths must be complete" },
   },
@@ -234,13 +237,24 @@ export const nodeSet: Command = {
     const n = snap.resolve(arg(ctx, 0, "node"));
     const assignments = ctx.positionals.slice(1);
     const file = str(ctx, "patch");
-    if (!assignments.length && !file) throw usage("Give path=value assignments or --patch file.json");
+    const presetName = str(ctx, "preset");
+    if (!assignments.length && !file && !presetName) throw usage("Give path=value assignments, --patch file.json or --preset <name>");
     const st = await getSettings(s, n);
     settingsWarnings(ctx, st, n, snap.upstream(n.id).some((id) => snap.byId(id)?.state !== "EXECUTED"));
     let plan: PatchPlan;
     try {
       const opts = { exact: Boolean(ctx.values.exact) };
       const parts: PatchPlan[] = [];
+      if (presetName) {
+        const params: Record<string, Json> = {};
+        for (const p of (ctx.values.param as string[] | undefined) ?? []) {
+          const eq = p.indexOf("=");
+          if (eq < 1) throw usage(`--param must be k=v, got ${JSON.stringify(p)}`);
+          params[p.slice(0, eq)] = coerce(p.slice(eq + 1), undefined, undefined);
+        }
+        const alias = n.factory ? byFactory(n.factory)?.alias : undefined;
+        parts.push(planObject(st.model, buildPreset(alias, { name: presetName, ...params }).settings, { exact: true }));
+      }
       if (file) {
         const obj: unknown = JSON.parse(await readFile(file, "utf8"));
         if (!isObject(obj as never)) throw usage(`${file} must hold a JSON object`);
