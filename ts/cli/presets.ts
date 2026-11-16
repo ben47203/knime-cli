@@ -77,11 +77,11 @@ const TREE_EXAMPLE = { target: "median_house_value", exclude: ["ocean_proximity"
 
 const predictorName = (alias: string): Preset => ({
   name: "named", desc: "Name the prediction column (settings appear once the model input is connected)",
-  params: { name: { kind: "string", required: true, desc: "prediction column name" } },
-  example: { name: "pred_rf" },
+  params: { column: { kind: "string", required: true, desc: "prediction column name" } },
+  example: { column: "pred_rf" },
   build: (p) => ({
     changePredictionColumnName: true,
-    predictionColumnName: String(p.name),
+    predictionColumnName: String(p.column),
     ...(alias === "rtree-predict" ? {} : { appendPredictionConfidence: false }),
   }),
 });
@@ -116,9 +116,9 @@ export const PRESETS: Record<string, Preset[]> = {
   "rtree-predict": [predictorName("rtree-predict")],
   "reg-predict": [{
     name: "named", desc: "Name the prediction column",
-    params: { name: { kind: "string", required: true, desc: "prediction column name" } },
-    example: { name: "pred_linear" },
-    build: (p) => ({ has_custom_predicition_name: true, custom_prediction_name: String(p.name) }),
+    params: { column: { kind: "string", required: true, desc: "prediction column name" } },
+    example: { column: "pred_linear" },
+    build: (p) => ({ has_custom_predicition_name: true, custom_prediction_name: String(p.column) }),
   }],
   groupby: [{
     name: "aggregate", desc: "Group by columns and aggregate others (outputs <Method>(<col>); Count is Count*(<col>))",
