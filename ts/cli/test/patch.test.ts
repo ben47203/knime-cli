@@ -93,6 +93,32 @@ test("numbers and numeric strings compare equal, since the server coerces", () =
   assert.equal(planObject({ seed: "42" }, { seed: 42 }).changes[0]!.kind, "same");
 });
 
+test("a typed value over an existing entry compares by value, so re-applying it is a no-op", () => {
+  const model: JsonObject = {
+    splitCriterion: "InformationGainRatio",
+    fingerprintColumn: null,
+    learningRate: 0.1,
+    columnFilterConfig: { "filter-type": "STANDARD", included_names: ["a"], excluded_names: [], enforce_option: "EnforceInclusion", name_pattern: {} },
+  };
+  const p = planObject(model, {
+    splitCriterion: { $type: "string", value: "InformationGainRatio" },
+    fingerprintColumn: { $type: "string", value: null },
+    learningRate: { $type: "double", value: 0.1 },
+    columnFilterConfig: { $type: "config", value: { included_names: { $type: "string[]", value: ["a"] }, enforce_option: "EnforceInclusion" } },
+  });
+  assert.deepEqual(p.changes.map((c) => c.kind), ["same", "same", "same", "same"]);
+  assert.deepEqual(p.patch, {});
+  assert.deepEqual(p.warnings, []);
+  const q = planObject(model, { learningRate: { $type: "double", value: 0.05 } });
+  assert.deepEqual(q.patch, { learningRate: { $type: "double", value: 0.05 } });
+});
+
+test("a typed value for a missing key is sent as is, without a warning", () => {
+  const p = planObject({ nrModels: 100 }, { splitCriterion: { $type: "string", value: "Gini" } });
+  assert.equal(p.changes[0]!.kind, "new");
+  assert.deepEqual(p.warnings, []);
+});
+
 test("formatChanges marks new, changed and unchanged entries", () => {
   const p = plan({ a: 1, b: 2 }, "a=1", "b=3", "c:int=4");
   assert.deepEqual(formatChanges(p.changes), ["  a = 1 (unchanged)", "~ b: 2 → 3", '+ c = {"$type":"int","value":4}']);

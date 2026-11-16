@@ -171,10 +171,9 @@ function plan(model: JsonObject, items: readonly Item[], opts: PlanOptions): Pat
     if (existing === undefined) {
       if (item.type && item.type !== "json") {
         after = { $type: item.type, value: after };
-        warnings.push(`${path} isn't in the current settings; sending it as a typed value to create it (needs a server that supports $type)`);
-      } else {
-        warnings.push(`${path} isn't in the current settings; sending it anyway, since older servers hide keys whose value is null. `
-          + `The server rejects it if the node doesn't know it; to create a key, give a type (${path}:string=…)`);
+      } else if (!isTyped(after)) {
+        warnings.push(`${path} isn't in the current settings, and a plain value can't create a key, so the server will `
+          + `reject it; give a type to create it (${path}:string=…, or {"$type": …, "value": …} in a patch file)`);
       }
       changes.push({ path, keys, kind: "new", after, expandedFrom });
       continue;
@@ -214,10 +213,31 @@ function resolveSuffix(leaves: readonly Leaf[], model: JsonObject, keys: readonl
   return [...seen.values()];
 }
 
-function same(a: Json | undefined, b: Json): boolean {
-  if (typeof a === "number" && typeof b === "string") return String(a) === b; // the server coerces
-  if (typeof a === "string" && typeof b === "number") return a === String(b);
-  return JSON.stringify(a) === JSON.stringify(b);
+export function isTyped(v: Json | undefined): v is { $type: Json; value: Json } {
+  return isObject(v) && "$type" in v;
+}
+
+/**
+ * The value a typed patch value stands for, with numbers as strings: the server coerces numbers and numeric strings
+ * to the entry's type, so 42 and "42" are the same setting. Used only for comparison.
+ */
+function comparable(v: Json | undefined): Json | undefined {
+  if (isTyped(v)) return comparable(v.value);
+  if (typeof v === "number") return String(v);
+  if (Array.isArray(v)) return v.map((x) => comparable(x) ?? null);
+  if (isObject(v)) return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, comparable(x) ?? null]));
+  return v;
+}
+
+/**
+ * True if applying `b` over `a` changes nothing. A typed value over an existing entry compares by its value, so
+ * re-applying a preset to a node that already holds it is a no-op; a typed group compares only the keys it names.
+ */
+export function same(a: Json | undefined, b: Json): boolean {
+  const ca = comparable(a);
+  const cb = comparable(b);
+  if (isObject(ca) && isObject(cb)) return Object.entries(cb).every(([k, v]) => k in ca && same(ca[k], v));
+  return JSON.stringify(ca) === JSON.stringify(cb);
 }
 
 export class PatchError extends Error {}
