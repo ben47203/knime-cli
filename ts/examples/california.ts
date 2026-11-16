@@ -5,6 +5,9 @@
  *   KNIME_CLI_PID=77024 node examples/california.ts            # build + run everything
  *   KNIME_CLI_PID=77024 CAL_TREES=0 node examples/california.ts  # skip the tree learners
  *
+ * Reads housing.csv and writes out/ under CAL_DIR (default ~/knime-workspace/knime-cli-demo/california-housing);
+ * CAL_DATA and CAL_OUT override the two paths individually.
+ *
  * Models: linear regression, degree-2 polynomial regression, an RProp MLP, and (unless CAL_TREES=0) random forest,
  * gradient boosted trees and a single regression tree, all trained on the same 80% partition (seed 42) and scored on
  * the other 20%. The tree learners are configured with typed settings values; see treeConfig().
@@ -23,13 +26,16 @@
  * script stops issuing commands, reads the workflow state, and reports what it saw.
  */
 import { mkdir } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 import { HttpError, type KnimeClient } from "../src/client.ts";
 import { connect, type Target } from "../test/helpers/fixture.ts";
 import type { ExecResult, SetResult, Settings, WorkflowRead, WorkflowState } from "../test/helpers/types.ts";
 
-const DATA = "/Users/benbryant/knime-workspace/knime-cli-demo/california-housing/housing.csv";
-const OUT = "/Users/benbryant/knime-workspace/knime-cli-demo/california-housing/out";
+const DEMO_DIR = process.env.CAL_DIR ?? join(homedir(), "knime-workspace", "knime-cli-demo", "california-housing");
+const DATA = process.env.CAL_DATA ?? join(DEMO_DIR, "housing.csv");
+const OUT = process.env.CAL_OUT ?? join(DEMO_DIR, "out");
 const LABEL = "cal:";
 /** median_house_value is capped at 500,001 in this dataset; the MLP needs its target in [0, 1]. */
 const TARGET_SCALE = 500001;
