@@ -44,6 +44,25 @@
         "reference": { "useRowID": false, "columnName": "median_house_value" },
         "predicted": { "useRowID": false, "columnName": "pred_linear" }
       }
+    },
+    {
+      "key": "rf-learn",
+      "alias": "rf-learn",
+      "preset": { "name": "regression", "target": "median_house_value", "exclude": ["ocean_proximity"] },
+      "settings": { "nrModels": 100 }
+    },
+    {
+      "key": "rf-predict",
+      "alias": "rf-predict",
+      "preset": { "name": "named", "column": "pred_rf" }
+    },
+    {
+      "key": "rf-score",
+      "alias": "numeric-scorer",
+      "settings": {
+        "reference": { "useRowID": false, "columnName": "median_house_value" },
+        "predicted": { "useRowID": false, "columnName": "pred_rf" }
+      }
     }
   ],
   "connections": [
@@ -52,7 +71,11 @@
     { "from": "partition:1", "to": "learn:1" },
     { "from": "learn:1", "to": "predict:1" },
     { "from": "partition:2", "to": "predict:2" },
-    { "from": "predict:1", "to": "score:1" }
+    { "from": "predict:1", "to": "score:1" },
+    { "from": "partition:1", "to": "rf-learn:1" },
+    { "from": "rf-learn:3", "to": "rf-predict:1" },
+    { "from": "partition:2", "to": "rf-predict:2" },
+    { "from": "rf-predict:1", "to": "rf-score:1" }
   ],
-  "run": ["score"]
+  "run": ["score", "rf-score"]
 }

@@ -76,9 +76,10 @@ test("resolveSpec reports every problem at once", () => {
 test("the example spec resolves", () => {
   const raw = JSON.parse(readFileSync(new URL("../examples/housing-small.json", import.meta.url), "utf8"));
   const s = resolveSpec(raw, { HOUSING_CSV: "/data/housing.csv" });
-  assert.deepEqual(s.nodes.map((n) => n.key), ["reader", "missing", "partition", "learn", "predict", "score"]);
+  assert.deepEqual(s.nodes.map((n) => n.key), ["reader", "missing", "partition", "learn", "predict", "score", "rf-learn", "rf-predict", "rf-score"]);
   assert.equal(s.nodes[0]!.settings!["source.path.path"], "/data/housing.csv");
-  assert.deepEqual(s.run, ["score"]);
+  assert.deepEqual(s.run, ["score", "rf-score"]);
+  assert.equal(s.nodes.find((n) => n.key === "rf-learn")!.settings!.nrModels, 100);
 });
 
 test("planner adds everything into an empty workflow, right of existing nodes", async () => {
