@@ -48,7 +48,7 @@ export const workflowShow: Command = {
     const counts = new Map<string, number>();
     for (const n of nodes) counts.set(n.state ?? "?", (counts.get(n.state ?? "?") ?? 0) + 1);
     const text = [
-      `${data.project?.name ?? target.projectId} / ${target.workflowId}: ${nodes.length} node(s) — ${[...counts].map(([k, v]) => `${v} ${k}`).join(", ")}`,
+      `${data.project?.name ?? target.projectId} / ${target.workflowId}: ${nodes.length} node(s)${counts.size ? ` — ${[...counts].map(([k, v]) => `${v} ${k}`).join(", ")}` : ""}`,
       "",
       `${"id".padEnd(w.id)}  ${"label".padEnd(w.label)}  ${"name".padEnd(w.name)}  state`,
       ...nodes.flatMap((n) => {
