@@ -6,7 +6,7 @@
  */
 import { HttpError, RpcError } from "../../src/client.ts";
 import { Session } from "../session.ts";
-import type { Connection, ExecResult, JsonObject, State, Status, Transport, WorkflowRead } from "../types.ts";
+import type { Connection, ExecResult, Json, JsonObject, State, Status, Transport, WorkflowRead } from "../types.ts";
 
 export interface FakeNode {
   id: string;
@@ -19,6 +19,8 @@ export interface FakeNode {
   modelWhenFed?: JsonObject;
   /** Stays IDLE when executed (never configured). */
   staysIdle?: boolean;
+  /** Reads as complete: false until a set creates `completesWith` (like a fresh tree learner). */
+  completesWith?: string;
   inPorts: number;
   outPorts: number;
   x: number;
@@ -96,7 +98,7 @@ export class FakeKnime implements Transport {
         return { errors: 0, warnings: 0, nodes: [] };
       case "/api/node/settings": {
         const n = this.#node(body.nodeId);
-        return { nodeId: n.id, kind: "native", model: this.#model(n), variables: {}, redacted: [] };
+        return { nodeId: n.id, kind: "native", ...this.#completeness(n), model: this.#model(n), variables: {}, redacted: [] };
       }
       case "/api/node/settings/set": {
         const n = this.#node(body.nodeId);
@@ -109,7 +111,7 @@ export class FakeKnime implements Transport {
             if (d.state === "EXECUTED") d.state = "CONFIGURED";
           }
         }
-        return { changed, nodeId: n.id, state: n.state, model, redacted: [] };
+        return { changed, nodeId: n.id, state: n.state, ...this.#completeness(n), model, redacted: [] };
       }
       case "/api/execute": {
         const targets = (body.nodeIds as string[] | undefined) ?? [...this.nodes.keys()];
@@ -129,6 +131,11 @@ export class FakeKnime implements Transport {
       default:
         throw new HttpError(404, `No route ${path}`);
     }
+  }
+
+  #completeness(n: FakeNode): { complete: boolean; problem?: string } {
+    return n.completesWith && !(n.completesWith in n.model)
+      ? { complete: false, problem: `save failed after nrModels; ${n.completesWith} is missing` } : { complete: true };
   }
 
   #exec(targets: string[]): ExecResult {
@@ -212,6 +219,15 @@ export class FakeKnime implements Transport {
 function merge(target: JsonObject, patch: JsonObject, path: string): boolean {
   let changed = false;
   for (const [k, v] of Object.entries(patch)) {
+    if (v && typeof v === "object" && !Array.isArray(v) && "$type" in v) {
+      // A typed value creates or replaces the key; store what the server would read back.
+      const plain = unwrap(v as Json);
+      if (JSON.stringify(target[k]) !== JSON.stringify(plain)) {
+        target[k] = plain;
+        changed = true;
+      }
+      continue;
+    }
     if (!(k in target)) throw new HttpError(400, `Unknown setting /model${path}/${k}; existing keys: ${Object.keys(target).join(", ")}`);
     const cur = target[k];
     if (v && typeof v === "object" && !Array.isArray(v) && cur && typeof cur === "object" && !Array.isArray(cur)) {
@@ -222,4 +238,12 @@ function merge(target: JsonObject, patch: JsonObject, path: string): boolean {
     }
   }
   return changed;
+}
+
+function unwrap(v: Json): Json {
+  if (v && typeof v === "object" && !Array.isArray(v)) {
+    if ("$type" in v) return unwrap((v as { value: Json }).value);
+    return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, unwrap(x)]));
+  }
+  return Array.isArray(v) ? v.map(unwrap) : v;
 }
