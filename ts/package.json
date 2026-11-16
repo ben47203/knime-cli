@@ -4,8 +4,11 @@
   "private": true,
   "type": "module",
   "engines": { "node": ">=23.6" },
+  "bin": { "knime": "cli/main.ts" },
   "scripts": {
     "test": "node --test --test-concurrency=1 'test/*.test.ts'",
+    "test:cli": "node --test 'cli/test/*.test.ts'",
+    "knime": "node cli/main.ts",
     "typecheck": "tsc"
   },
   "devDependencies": {
