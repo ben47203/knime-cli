@@ -1,6 +1,7 @@
 import { byAlias, byFactory, CATALOGUE, search, type CatalogueEntry } from "../catalogue.ts";
 import { arg, type Command } from "../cli.ts";
 import { CliError, EXIT } from "../errors.ts";
+import { presetsFor } from "../presets.ts";
 
 const brief = (e: CatalogueEntry) => ({ alias: e.alias, name: e.name, category: e.category, factory: e.factory, verified: e.verified, deprecated: e.deprecated });
 
@@ -40,8 +41,11 @@ export const nodesInfo: Command = {
       throw new CliError({ code: "ALIAS_NOT_FOUND", exit: EXIT.NOT_FOUND, message: `No catalogue entry "${q}"`, hint: near.length ? `Did you mean: ${near.join(", ")}?` : "See `knime nodes search`." });
     }
     const port = (p: { index: number; name: string; type: string }) => `  ${p.index}: ${p.name} (${p.type})`;
+    const presets = presetsFor(e.alias).map((p) => ({
+      name: p.name, desc: p.desc, params: p.params, example: p.example, settings: p.build(p.example),
+    }));
     return {
-      data: e,
+      data: { ...e, presets },
       text: [
         `${e.name} — ${e.alias}${e.verified ? "" : " (unverified)"}`,
         `factory: ${e.factory}`,
@@ -50,6 +54,13 @@ export const nodesInfo: Command = {
         "outputs:", ...(e.out.length ? e.out.map(port) : ["  none"]),
         "settings keys:", ...(Object.keys(e.keys).length ? Object.entries(e.keys).map(([k, v]) => `  ${k}: ${v}`) : ["  (none recorded; read them with `knime node settings`)"]),
         ...(e.gotchas.length ? ["gotchas:", ...e.gotchas.map((g) => `  - ${g}`)] : []),
+        ...presets.flatMap((p) => [
+          `preset "${p.name}": ${p.desc}`,
+          ...Object.entries(p.params).map(([k, v]) => `  ${k}${v.required ? " (required)" : ""} [${v.kind}]: ${v.desc}`),
+          `  e.g. in an apply spec: "preset": ${JSON.stringify({ name: p.name, ...p.example })}`,
+          `  which sends this patch (settings in the spec override single keys):`,
+          ...JSON.stringify(p.settings, null, 2).split("\n").map((l) => `    ${l}`),
+        ]),
       ],
     };
   },

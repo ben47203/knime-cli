@@ -7,6 +7,7 @@ import { CliError, EXIT, usage } from "./errors.ts";
 import { runNodes, type RunReport } from "./execute.ts";
 import { formatChanges, planObject, type Change } from "./patch.ts";
 import { isObject } from "./paths.ts";
+import { buildPreset, overlay, type PresetRef } from "./presets.ts";
 import type { NodeView, Session, Snapshot } from "./session.ts";
 import type { Json, JsonObject, SetResult, Settings } from "./types.ts";
 
@@ -15,6 +16,8 @@ export interface SpecNode {
   alias?: string;
   factory?: string;
   settings?: JsonObject;
+  /** A catalogue preset (`"regression"`, or `{"name": "regression", "target": …}`); `settings` override its keys. */
+  preset?: PresetRef;
   /** Grid position [column, row]; defaults to the node's depth and its index at that depth. */
   at?: [number, number];
 }
@@ -111,6 +114,10 @@ export function resolveSpec(raw: unknown, env?: Record<string, string | undefine
     let settings: JsonObject | undefined;
     try {
       settings = n.settings && isObject(n.settings) ? (expandEnv(n.settings, env) as JsonObject) : undefined;
+      if (n.preset !== undefined) {
+        const ref = expandEnv(n.preset as Json, env) as PresetRef;
+        settings = overlay(buildPreset(entry?.alias, ref).settings, settings ?? {});
+      }
     } catch (e) {
       problems.push(`${where} (${n.key}): ${(e as Error).message}`);
     }

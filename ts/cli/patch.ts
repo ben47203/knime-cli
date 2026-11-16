@@ -153,7 +153,8 @@ function plan(model: JsonObject, items: readonly Item[], opts: PlanOptions): Pat
     let keys = item.keys;
     let expandedFrom: string | undefined;
     let existing = getIn(model, keys);
-    if (existing === undefined && !opts.exact) {
+    // A typed value names the exact key to create, so it's never expanded as a suffix.
+    if (existing === undefined && !opts.exact && !item.type && !isTyped(item.value(undefined))) {
       const match = resolveSuffix(leaves, model, keys);
       if (match.length === 1) {
         keys = match[0]!;
