@@ -87,6 +87,10 @@ export type JsonObject = { [key: string]: Json };
 export interface Settings {
   nodeId: string;
   kind: "native" | "component";
+  /** False if the node failed to save its own settings, so `model` stops at the last key it wrote. */
+  complete: boolean;
+  /** Why `complete` is false; absent otherwise. */
+  problem?: string;
   model: JsonObject;
   variables: JsonObject;
   /** JSON Pointers (e.g. `/model/password`) of secrets replaced by `{"$redacted": true}`. */
@@ -99,6 +103,9 @@ export interface SetResult {
   nodeId: string;
   state: State;
   message?: Message;
+  /** As in `Settings`, for the settings read back after the set. */
+  complete: boolean;
+  problem?: string;
   model: JsonObject;
   redacted: string[];
 }

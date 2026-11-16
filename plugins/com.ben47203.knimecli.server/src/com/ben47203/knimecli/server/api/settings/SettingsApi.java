@@ -1,12 +1,19 @@
 package com.ben47203.knimecli.server.api.settings;
 
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 
 import org.knime.core.node.InvalidSettingsException;
+import org.knime.core.node.NodeLogger;
+import org.knime.core.node.NodeModel;
 import org.knime.core.node.NodeSettings;
+import org.knime.core.node.NodeSettingsWO;
 import org.knime.core.node.config.base.ConfigBase;
+import org.knime.core.node.workflow.NativeNodeContainer;
 import org.knime.core.node.workflow.NodeContainer;
+import org.knime.core.node.workflow.NodeContext;
 import org.knime.core.node.workflow.SubNodeContainer;
 import org.knime.core.node.workflow.WorkflowManager;
 
@@ -34,6 +41,15 @@ public final class SettingsApi {
     /** Flow-variable bindings of the model settings; holds variable names only. */
     static final String VARIABLES = "variables";
 
+    private static final NodeLogger LOGGER = NodeLogger.getLogger(SettingsApi.class);
+
+    /**
+     * {@code NodeModel.saveSettingsTo}, which is protected. Core's own caller ({@code Node.saveModelSettingsTo})
+     * catches and only logs what the node throws, so calling it directly is the one way to see that exception.
+     * Null if it can't be reached, in which case reads aren't checked for completeness.
+     */
+    private static final Method SAVE_SETTINGS_TO = saveSettingsTo();
+
     private SettingsApi() {
     }
 
@@ -43,8 +59,11 @@ public final class SettingsApi {
 
     /**
      * A node's settings. {@code redacted} lists the JSON Pointers of secrets replaced by {@code {"$redacted": true}}.
+     * {@code complete} is false if the node failed to save its own settings, so {@code model} stops at the last key it
+     * wrote; {@code problem} then says why (and is absent otherwise). See {@link #problem}.
      */
-    record Settings(String nodeId, String kind, JsonNode model, JsonNode variables, List<String> redacted) {
+    record Settings(String nodeId, String kind, boolean complete, String problem, JsonNode model, JsonNode variables,
+        List<String> redacted) {
     }
 
     /**
@@ -57,12 +76,18 @@ public final class SettingsApi {
         }
 
         @Override
+        @SuppressWarnings("try") // the lock is held, not used
         protected Object execute(final WorkflowManager wfm, final NodeContainer nc, final NodeTarget request)
             throws ApiException {
             var kind = kind(nc);
-            var settings = nc.getNodeSettings(); // fills in defaults for nodes that were never configured
+            NodeSettings settings;
+            String problem;
+            try (var lock = wfm.lock()) { // so the check sees the node the read did
+                settings = nc.getNodeSettings(); // fills in defaults for nodes that were never configured
+                problem = problem(nc, settings);
+            }
             var redacted = new ArrayList<String>();
-            return new Settings(NodeIds.toId(nc), kind, section(settings, MODEL, redacted),
+            return new Settings(NodeIds.toId(nc), kind, problem == null, problem, section(settings, MODEL, redacted),
                 section(settings, VARIABLES, redacted), redacted);
         }
     }
@@ -81,10 +106,11 @@ public final class SettingsApi {
     /**
      * Outcome of a set. {@code changed} is false when the patch matched the current settings, in which case the node
      * was left alone; otherwise it and its successors were reset and reconfigured, and {@code message} is the warning
-     * or error configuring left on it.
+     * or error configuring left on it. {@code complete} and {@code problem} are as in {@link Settings}, for the
+     * settings read back afterwards.
      */
-    record SetResult(boolean changed, String nodeId, State state, Message message, JsonNode model,
-        List<String> redacted) {
+    record SetResult(boolean changed, String nodeId, State state, Message message, boolean complete, String problem,
+        JsonNode model, List<String> redacted) {
     }
 
     /**
@@ -108,6 +134,8 @@ public final class SettingsApi {
             throws ApiException {
             kind(nc);
             boolean changed;
+            NodeSettings after;
+            String problem;
             // Read, compare and load under one lock hold, so nothing can start executing or change in between.
             try (var lock = wfm.lock()) {
                 var current = nc.getNodeSettings();
@@ -121,11 +149,13 @@ public final class SettingsApi {
                 if (changed) {
                     load(wfm, nc, updated, current);
                 }
+                after = nc.getNodeSettings();
+                problem = problem(nc, after);
             }
             var redacted = new ArrayList<String>();
-            var model = section(nc.getNodeSettings(), MODEL, redacted);
-            return new SetResult(changed, NodeIds.toId(nc), NodeStates.state(nc), NodeStates.message(nc), model,
-                redacted);
+            var model = section(after, MODEL, redacted);
+            return new SetResult(changed, NodeIds.toId(nc), NodeStates.state(nc), NodeStates.message(nc),
+                problem == null, problem, model, redacted);
         }
 
         /**
@@ -145,7 +175,9 @@ public final class SettingsApi {
             try {
                 wfm.loadNodeSettings(id, updated);
             } catch (InvalidSettingsException e) {
-                throw new ApiException(400, "The node rejected these settings: " + e.getMessage());
+                var problem = problem(nc, current);
+                throw new ApiException(400, "The node rejected these settings: " + e.getMessage()
+                    + (problem == null ? "" : ". Note: " + problem));
             } catch (IllegalStateException e) { // NOSONAR: a race with execution the check above didn't catch
                 throw new ApiException(409, "Cannot change settings of " + NodeIds.toId(nc) + ": " + e.getMessage());
             }
@@ -177,5 +209,57 @@ public final class SettingsApi {
             return SettingsJson.toJson(section, redacted, SettingsJson.child("", key));
         }
         return SettingsJson.emptyObject();
+    }
+
+    /**
+     * Why {@code read}, which {@code nc.getNodeSettings()} just returned, holds incomplete model settings; null if it
+     * doesn't (or that can't be checked).
+     *
+     * <p>
+     * For a node that has never loaded settings, core fills the model section by calling the node's
+     * {@code saveSettingsTo}; if that throws, {@code Node.saveModelSettingsTo} logs "Could not save model" and core
+     * carries on with whatever was written up to that point. The exception never reaches us, so the save is repeated
+     * into a scratch settings object to see it. Once a node has loaded settings, core returns those instead, so a
+     * failed save only explains {@code read} if {@code read}'s model is exactly what the failed save wrote.
+     */
+    static String problem(final NodeContainer nc, final NodeSettings read) {
+        if (!(nc instanceof NativeNodeContainer nnc) || SAVE_SETTINGS_TO == null) {
+            return null; // NOSONAR: null means "complete"
+        }
+        var scratch = new NodeSettings(MODEL);
+        Throwable failure = null;
+        NodeContext.pushContext(nc);
+        try {
+            SAVE_SETTINGS_TO.invoke(nnc.getNodeModel(), scratch);
+        } catch (InvocationTargetException e) {
+            failure = e.getCause() != null ? e.getCause() : e;
+        } catch (IllegalAccessException | RuntimeException e) { // NOSONAR: the check is best effort
+            LOGGER.debug("Could not check whether the settings of " + nc.getNameWithID() + " are complete", e);
+            return null;
+        } finally {
+            NodeContext.removeLastContext();
+        }
+        var model = Secrets.entry(read, MODEL);
+        var fromFailedSave = model == null ? scratch.keySet().isEmpty() : model.equals(scratch);
+        if (failure == null || !fromFailedSave) {
+            return null;
+        }
+        var keys = new ArrayList<>(scratch.keySet());
+        var where = keys.isEmpty() ? "before writing any key" : "after writing " + keys.get(keys.size() - 1);
+        return "The node failed to save its own settings (" + failure.getClass().getSimpleName()
+            + (failure.getMessage() == null ? "" : ": " + failure.getMessage()) + ") " + where
+            + ", so model is incomplete and the node can't load it as is. Add the missing keys with typed values,"
+            + " e.g. {\"key\": {\"$type\": \"string\", \"value\": \"...\"}}, through node/settings/set.";
+    }
+
+    private static Method saveSettingsTo() {
+        try {
+            var method = NodeModel.class.getDeclaredMethod("saveSettingsTo", NodeSettingsWO.class);
+            method.setAccessible(true); // NOSONAR: see SAVE_SETTINGS_TO
+            return method;
+        } catch (NoSuchMethodException | RuntimeException e) { // NOSONAR: degrade to unchecked reads
+            LOGGER.warn("Can't reach NodeModel.saveSettingsTo, so incomplete node settings won't be flagged", e);
+            return null;
+        }
     }
 }

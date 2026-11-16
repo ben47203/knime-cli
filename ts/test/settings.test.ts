@@ -270,6 +270,20 @@ describe("null values, incomplete reads and typed values", () => {
     assert.equal(s.model.targetColumn, null);
     assert.equal(s.model.hardCodedRootColumn, null);
   });
+
+  test("a read cut short by the node's own save is flagged, and still answered", async () => {
+    const s = await getSettings(tree);
+    assert.equal(s.complete, false);
+    assert.match(s.problem ?? "", /NullPointerException/);
+    assert.match(s.problem ?? "", /nrModels/, "names the last key written");
+    assert.match(s.problem ?? "", /\$type/, "says how to repair it");
+    assert.equal(s.model.nrModels, 100);
+    assert.ok(!("splitCriterion" in s.model));
+
+    const ok = await getSettings(wait);
+    assert.equal(ok.complete, true);
+    assert.equal(ok.problem, undefined);
+  });
 });
 
 describe("metanodes", () => {
