@@ -94,8 +94,8 @@ export const TRANSLATIONS: readonly Translation[] = [
   },
   {
     code: "UNKNOWN_SETTING", exit: EXIT.REJECTED, status: 400, match: /unknown setting/i,
-    cause: "The patch names a key the node doesn't have. Lists and groups can't grow (e.g. `renamings/1`), and a node shows no keys until its input has a table spec.",
-    hint: "Run `knime node settings <node>` to list the keys. If the model is empty, run the upstream nodes first (`knime run <upstream>`).",
+    cause: "The patch gives a plain value for a key the node doesn't have; plain values only change existing keys. A node shows no keys until it's connected and its input has a table spec.",
+    hint: "Run `knime node settings <node>` to list the keys. To create a key (a list entry, a missing tree-learner key), give a typed value: `path:string=…` or {\"$type\": …, \"value\": …}; for tree learners, GroupBy and Column Renamer use a preset (`knime nodes info <alias>`). If the model is empty, connect the node and run upstream first.",
   },
   {
     code: "SETTING_PROTECTED", exit: EXIT.REJECTED, status: 400, match: /password or credentials|redacted placeholder|internal settings-model/i,
@@ -158,7 +158,7 @@ export const TRANSLATIONS: readonly Translation[] = [
 export const CLI_ERRORS: readonly Pick<Translation, "code" | "exit" | "cause" | "hint">[] = [
   {
     code: "EMPTY_MODEL", exit: EXIT.REJECTED,
-    cause: "The node shows no settings (`model: {}`) because its input has no table spec yet.",
+    cause: "The node shows no settings (`model: {}`): it isn't connected yet (learners and predictors), or its input has no table spec yet.",
     hint: "Run the nodes upstream of it first (`knime run <upstream>`), then set its settings. `knime apply` does this for you.",
   },
   {
@@ -223,7 +223,8 @@ export function nodeMessageHint(text: string | undefined): string | undefined {
   if (/"~"|'~'|\bunexpected token\b.*~/i.test(text)) return "Java Snippet expressions need a full statement, e.g. `return $a$ / $b$;`.";
   if (/no column (spec|available)|input table|no input/i.test(text)) return "Connect its input and run upstream first.";
   if (/target column/i.test(text)) return "Set the target column explicitly; learners guess it.";
-  if (/split ?criterion/i.test(text)) return "Tree learners can't be configured through the API yet (their saved settings are cut short); shape the input instead.";
+  if (/split ?criterion/i.test(text)) return "A fresh tree learner needs its missing keys created with typed values in one set: use the `regression` preset (`knime nodes info rf-learn`).";
+  if (/index (\d+) out of bounds for length \1/i.test(text)) return "On a gradient boosted trees learner this means alphaFraction is 1.0; keep it below 1 (default 0.95).";
   if (/\[0, ?1\]|between 0 and 1|normali[sz]/i.test(text)) return "RProp MLP needs its target scaled to [0,1]; add a Normalizer (min-max).";
   return undefined;
 }
