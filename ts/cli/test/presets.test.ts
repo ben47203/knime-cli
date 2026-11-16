@@ -31,6 +31,17 @@ test("every preset belongs to a catalogue alias and builds its example", () => {
   }
 });
 
+test("presets build from a reference with their example parameters ('name' is reserved for the preset)", () => {
+  for (const [alias, presets] of Object.entries(PRESETS)) {
+    for (const p of presets) {
+      assert.ok(!("name" in p.params), `${alias}:${p.name} has a "name" parameter, which clashes with the preset name`);
+      assert.deepEqual(buildPreset(alias, { name: p.name, ...p.example }).settings, p.build(p.example));
+    }
+  }
+  assert.deepEqual(buildPreset("rf-predict", { name: "named", column: "p" }).settings,
+    { changePredictionColumnName: true, predictionColumnName: "p", appendPredictionConfidence: false });
+});
+
 test("the rf preset completes a fresh learner with typed keys, and is a no-op once applied", () => {
   const { settings } = buildPreset("rf-learn", { name: "regression", target: "y", exclude: ["id"] });
   const first = planObject(FRESH_TREE, settings);
