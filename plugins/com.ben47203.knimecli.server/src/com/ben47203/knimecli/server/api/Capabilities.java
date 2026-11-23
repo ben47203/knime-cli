@@ -5,6 +5,7 @@ import java.util.Map;
 
 import com.ben47203.knimecli.server.api.project.ProjectApi;
 import com.ben47203.knimecli.server.api.settings.SettingsApi;
+import com.ben47203.knimecli.server.api.workflow.CanvasApi;
 
 /**
  * Every {@link Reflected} KNIME internal the endpoints rely on, probed together at server start and reported in
@@ -21,6 +22,7 @@ public final class Capabilities {
         var targets = new LinkedHashMap<String, Reflected<?>>();
         targets.put("settingsSaveCheck", SettingsApi.saveSettingsTo());
         targets.put("saveRefreshesUi", ProjectApi.getServiceDependency());
+        targets.put("workflowSvg", CanvasApi.renderPreviewSvg());
         return targets;
     }
 
