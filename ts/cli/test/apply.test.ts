@@ -89,6 +89,7 @@ test("the example spec resolves", () => {
   const byDefault = resolveSpec(raw, { HOME: "/home/u" });
   assert.equal(byDefault.nodes[0]!.settings!["source.path.path"], "/home/u/knime-workspace/knime-cli-demo/california-housing/housing.csv");
   assert.equal(s.nodes.find((n) => n.key === "rf-learn")!.settings!.nrModels, 100);
+  assert.deepEqual(s.annotations.map((a) => [a.tag, a.around.length]), [["hs:prep", 3], ["hs:linear", 3], ["hs:forest", 3]]);
 });
 
 test("apply reports whether the project was dirty before it changed anything", async () => {
