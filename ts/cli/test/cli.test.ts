@@ -114,6 +114,40 @@ test("an unknown setting comes back translated (exit 7)", async () => {
   assert.match(r.json.error.hint, /knime node settings/);
 });
 
+test("node note goes below the label; lookup, label and workflow show keep working", async () => {
+  const k = workflow();
+  const r = await knime(k, "node", "note", "my:reader", "Reads", "the", "extract\\nmonthly", "--json");
+  assert.equal(r.code, 0);
+  assert.equal(k.nodes.get("root:1")!.label, "my:reader\nReads the extract\nmonthly");
+  assert.equal((await knime(k, "node", "settings", "my:reader", "--json")).json.data.nodeId, "root:1");
+  const show = await knime(k, "workflow", "show", "--prefix", "my:", "--json");
+  assert.deepEqual(show.json.data.nodes[0], { ...show.json.data.nodes[0], label: "my:reader", note: "Reads the extract\nmonthly" });
+  assert.equal((await knime(k, "node", "label", "my:reader", "my:src")).code, 0);
+  assert.equal(k.nodes.get("root:1")!.label, "my:src\nReads the extract\nmonthly", "relabelling keeps the note");
+  const same = await knime(k, "node", "note", "my:src", "Reads the extract\\nmonthly", "--json");
+  assert.equal(same.json.data.changed, false);
+  assert.equal((await knime(k, "node", "note", "my:src", "--clear")).code, 0);
+  assert.equal(k.nodes.get("root:1")!.label, "my:src");
+  assert.equal((await knime(k, "node", "label", "my:src", "two\nlines")).code, EXIT.USAGE);
+});
+
+test("a note on an unlabelled node sits below an empty first line, with a warning", async () => {
+  const k = workflow();
+  const r = await knime(k, "node", "note", "root:3", "spare", "--json");
+  assert.match(r.json.warnings[0], /no label/);
+  assert.equal(k.nodes.get("root:3")!.label, "\nspare");
+  const show = await knime(k, "workflow", "show", "--json");
+  assert.equal(show.json.data.nodes[2].label, undefined);
+  assert.equal((await knime(k, "node", "rm", "root:3")).code, EXIT.REFUSED, "a note isn't a label");
+});
+
+test("node add --note writes label and note in one command", async () => {
+  const k = workflow();
+  const r = await knime(k, "node", "add", "partition", "--label", "my:p2", "--note", "80/20 split", "--json");
+  assert.equal(k.nodes.get(r.json.data.id)!.label, "my:p2\n80/20 split");
+  assert.equal(k.commands("update_node_label").length, 1);
+});
+
 test("node rm refuses unlabelled nodes without --force, and short prefixes always", async () => {
   const k = workflow();
   assert.equal((await knime(k, "node", "rm", "root:3")).code, EXIT.REFUSED);
