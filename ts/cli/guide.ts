@@ -57,6 +57,7 @@ const ALIASES: Record<string, string> = {
   io: "data", output: "data",
   save: "saving", dirty: "saving", unsaved: "saving",
   svg: "images", png: "images", image: "images", canvas: "images", chart: "images", charts: "images",
+  annotate: "annotations", annotation: "annotations", notes: "annotations", note: "annotations", colours: "annotations", colors: "annotations",
 };
 
 export function findTopic(topics: readonly Topic[], name: string): Topic | undefined {

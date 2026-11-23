@@ -47,8 +47,9 @@ test("pickInstance prefers --pid, then the newest", () => {
 
 test("guide topics come from CONTEXT.md and errors include the generated table", () => {
   const topics = loadTopics();
-  for (const id of ["start", "model", "settings", "execution", "errors", "recipes", "apply"]) assert.ok(findTopic(topics, id), id);
+  for (const id of ["start", "model", "settings", "execution", "errors", "recipes", "apply", "annotations"]) assert.ok(findTopic(topics, id), id);
   assert.equal(findTopic(topics, "ports")?.id, "model");
+  assert.equal(findTopic(topics, "note")?.id, "annotations");
   assert.match(findTopic(topics, "errors")!.body, /GATEWAY_TIMEOUT/);
 });
 

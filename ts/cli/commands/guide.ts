@@ -8,7 +8,7 @@ export const guide: Command = {
   summary: "Short topics on KNIME and this API: start here if you have no context",
   args: "[topic]",
   options: { all: { type: "boolean", desc: "Print every topic" } },
-  notes: ["Topics: start, saving, connecting, model, settings, execution, errors, data, images, recipes, apply, design."],
+  notes: ["Topics: start, saving, connecting, model, settings, execution, errors, data, images, recipes, apply, annotations, design."],
   examples: ["knime guide", "knime guide settings", "knime guide --all --json"],
   async run(ctx) {
     const topics = loadTopics();
