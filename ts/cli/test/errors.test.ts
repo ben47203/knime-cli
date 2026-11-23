@@ -20,6 +20,8 @@ const cases: [unknown, string, number][] = [
   [new RpcError(-32600, "Connection could not be created", null), "CONNECTION_FAILED", EXIT.REJECTED],
   [new RpcError(-32001, "Method not allowed", null), "RPC_NOT_ALLOWED", EXIT.REJECTED],
   [new RpcError(-32000, "Something odd", null), "RPC_ERROR", EXIT.REJECTED],
+  // A gateway stack trace passes through the plugin's RpcAllowlist class; that alone isn't a refusal.
+  [new RpcError(-32600, "Failed to parse color", { stackTrace: "at com.ben47203.knimecli.server.http.RpcAllowlist.handle" }), "RPC_ERROR", EXIT.REJECTED],
   [Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } }), "NO_CONNECTION", EXIT.UNAVAILABLE],
   [new Error("boom"), "ERROR", EXIT.ERROR],
 ];

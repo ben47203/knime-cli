@@ -187,7 +187,7 @@ export const TRANSLATIONS: readonly Translation[] = [
     hint: "Check both nodes' ports with `knime node ports <node>`. Learners often have the model on a higher port (random forest: 3).",
   },
   {
-    code: "RPC_NOT_ALLOWED", exit: EXIT.REJECTED, status: "rpc", match: /not allowed|allowlist|-32001/i,
+    code: "RPC_NOT_ALLOWED", exit: EXIT.REJECTED, status: "rpc", match: /JSON-RPC -32001\b|not available via knime-cli/i,
     cause: "Only WorkflowService.executeWorkflowCommand and undo/redo are allowed through /rpc.",
     hint: "Use the /api endpoints (the CLI's commands) for reads.",
   },
