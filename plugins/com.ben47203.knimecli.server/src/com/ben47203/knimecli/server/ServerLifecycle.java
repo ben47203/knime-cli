@@ -12,6 +12,7 @@ import org.knime.gateway.impl.webui.jsonrpc.DefaultJsonRpcRequestHandler;
 import org.knime.gateway.impl.webui.service.ServiceInstances;
 
 import com.ben47203.knimecli.server.api.ApiRoutes;
+import com.ben47203.knimecli.server.api.Capabilities;
 import com.ben47203.knimecli.server.http.LocalApiServer;
 import com.ben47203.knimecli.server.http.RpcAllowlist;
 
@@ -47,9 +48,14 @@ final class ServerLifecycle {
             info.put("knimeVersion", KNIMEConstants.VERSION);
             info.put("pid", pid);
 
+            // /status also reports which reflective KNIME internals this KNIME version still has; the discovery file
+            // stays limited to what a client needs to connect.
+            var statusInfo = new LinkedHashMap<String, Object>(info);
+            statusInfo.putAll(Capabilities.probe());
+
             var handler = new DefaultJsonRpcRequestHandler(); // services resolved lazily, safe before UI init
             var s = new LocalApiServer(new RpcAllowlist(handler::handle), ApiRoutes.all(), //
-                ServerLifecycle::isGatewayReady, info, token, new Log());
+                ServerLifecycle::isGatewayReady, statusInfo, token, new Log());
             s.start();
 
             var contents = new LinkedHashMap<String, Object>(info);

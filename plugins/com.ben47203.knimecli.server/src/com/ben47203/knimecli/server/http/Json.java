@@ -22,6 +22,11 @@ public final class Json {
         if (v instanceof Number || v instanceof Boolean) {
             return v.toString();
         }
+        if (v instanceof Map<?, ?> m) {
+            @SuppressWarnings("unchecked") // only ever built with string keys here
+            var fields = (Map<String, ?>)m;
+            return object(fields);
+        }
         return string(v.toString());
     }
 
