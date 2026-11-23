@@ -85,10 +85,22 @@ export interface Connection {
   destPort: number;
 }
 
+/** One workflow annotation (`/api/workflow` → `workflow.workflowAnnotations`). Ids are `<workflowId>_<index>`. */
+export interface WorkflowAnnotationEnt {
+  id: string;
+  bounds: { x: number; y: number; width: number; height: number };
+  /** HTML once written by the modern UI or a gateway command; plain text in old workflows. */
+  text?: { value?: string; contentType?: string };
+  borderColor?: string;
+  backgroundColor?: string;
+  borderWidth?: number;
+}
+
 export interface WorkflowRead {
   contentHash: string;
   workflow: {
     nodes?: Record<string, WorkflowNode>;
+    workflowAnnotations?: WorkflowAnnotationEnt[];
     connections?: Record<string, Connection>;
     nodeTemplates?: Record<string, { name?: string }>;
   };
