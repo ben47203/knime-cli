@@ -21,7 +21,9 @@ const cases: [unknown, string, number][] = [
   [new RpcError(-32001, "Method not allowed", null), "RPC_NOT_ALLOWED", EXIT.REJECTED],
   [new RpcError(-32000, "Something odd", null), "RPC_ERROR", EXIT.REJECTED],
   // A gateway stack trace passes through the plugin's RpcAllowlist class; that alone isn't a refusal.
-  [new RpcError(-32600, "Failed to parse color", { stackTrace: "at com.ben47203.knimecli.server.http.RpcAllowlist.handle" }), "RPC_ERROR", EXIT.REJECTED],
+  [new RpcError(-32600, "Cannot do that", { stackTrace: "at com.ben47203.knimecli.server.http.RpcAllowlist.handle" }), "RPC_ERROR", EXIT.REJECTED],
+  [new RpcError(-32600, "Annotation not found\n * No workflow annotation found for id root_9", null), "ANNOTATION_NOT_FOUND", EXIT.NOT_FOUND],
+  [new RpcError(-32600, "Failed to parse color\n * Invalid hex string <green>", { stackTrace: "RpcAllowlist.handle" }), "BAD_COLOUR", EXIT.USAGE],
   [Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } }), "NO_CONNECTION", EXIT.UNAVAILABLE],
   [new Error("boom"), "ERROR", EXIT.ERROR],
 ];
