@@ -107,6 +107,7 @@ export const nodeLabel: Command = {
     if (!label || label.includes("\n")) throw usage("A label is one non-empty line", "Put longer text in a note: `knime node note <node> <text>`.");
     const clash = snap.withLabel(label).filter((x) => x.id !== n.id);
     if (clash.length) ctx.warn(`label "${label}" is also on ${clash.map((x) => x.id).join(", ")}`);
+    if (label === n.label) return { data: { id: n.id, label, previous: n.label, note: n.note, changed: false }, text: [`${n.id}: already "${label}"`] };
     await s.command({ kind: "update_node_label", nodeId: n.id, label: joinLabel(label, n.note) }, `label ${n.id}`);
     return { data: { id: n.id, label, previous: n.label, note: n.note }, text: [`${n.id}: ${n.label ? `"${n.label}" → ` : ""}"${label}"`] };
   },
