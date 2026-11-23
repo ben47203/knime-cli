@@ -147,6 +147,7 @@ export type PortSpec =
   | { kind: "table"; columns: ColumnSpec[] }
   | { kind: "flowVariables" }
   | { kind: "inactive" }
+  | { kind: "image"; format?: "png" | "svg" }
   | { kind: string; columns?: never };
 
 /** The other end of a connection. */
