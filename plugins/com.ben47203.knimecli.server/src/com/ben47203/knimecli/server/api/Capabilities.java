@@ -3,6 +3,7 @@ package com.ben47203.knimecli.server.api;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import com.ben47203.knimecli.server.api.project.ProjectApi;
 import com.ben47203.knimecli.server.api.settings.SettingsApi;
 
 /**
@@ -19,6 +20,7 @@ public final class Capabilities {
     private static Map<String, Reflected<?>> targets() {
         var targets = new LinkedHashMap<String, Reflected<?>>();
         targets.put("settingsSaveCheck", SettingsApi.saveSettingsTo());
+        targets.put("saveRefreshesUi", ProjectApi.getServiceDependency());
         return targets;
     }
 

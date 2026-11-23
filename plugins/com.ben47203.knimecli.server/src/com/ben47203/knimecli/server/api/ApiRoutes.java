@@ -7,6 +7,7 @@ import java.util.Map;
 
 import com.ben47203.knimecli.server.api.execution.ExecutionApi;
 import com.ben47203.knimecli.server.api.ports.PortsApi;
+import com.ben47203.knimecli.server.api.project.ProjectApi;
 import com.ben47203.knimecli.server.api.settings.SettingsApi;
 import com.ben47203.knimecli.server.api.workflow.GatewayReadApi;
 import com.ben47203.knimecli.server.api.workflow.StatusApi;
@@ -28,6 +29,7 @@ public final class ApiRoutes {
         endpoints.addAll(ExecutionApi.endpoints());
         endpoints.addAll(SettingsApi.endpoints());
         endpoints.addAll(PortsApi.endpoints());
+        endpoints.addAll(ProjectApi.endpoints());
         return routes(endpoints);
     }
 
