@@ -6,7 +6,9 @@
  */
 import { HttpError, RpcError } from "../../src/client.ts";
 import { Session } from "../session.ts";
-import type { BinaryResponse, ColumnSpec, Connection, ExecResult, Json, JsonObject, State, Status, Transport, WorkflowRead } from "../types.ts";
+import type {
+  BinaryResponse, ColumnSpec, Connection, ExecResult, Json, JsonObject, State, Status, Transport, WorkflowAnnotationEnt, WorkflowRead,
+} from "../types.ts";
 
 export interface FakeNode {
   id: string;
@@ -24,6 +26,7 @@ export interface FakeNode {
   inPorts: number;
   outPorts: number;
   x: number;
+  y: number;
   /** The table spec of every data output, known once the node has executed. */
   columns?: ColumnSpec[];
   /** Output ports that are image ports ("Output Image" group). */
@@ -35,6 +38,8 @@ export const IMAGE_PORT_TYPE = "org.knime.core.node.port.image.ImagePortObject";
 export class FakeKnime implements Transport {
   nodes = new Map<string, FakeNode>();
   connections: Connection[] = [];
+  /** Back to front, like the gateway. Ids are `root_<n>`, the lowest free n, so they're reused after a delete. */
+  annotations: WorkflowAnnotationEnt[] = [];
   next = 1;
   calls: { method: string; body: Record<string, unknown> }[] = [];
   /** Fail the next workflow command of this kind with HTTP 504 (after applying it). */
@@ -50,7 +55,7 @@ export class FakeKnime implements Transport {
   add(n: Partial<FakeNode> & { factory: string }): FakeNode {
     const id = `root:${this.next++}`;
     const node: FakeNode = {
-      id, name: n.factory.split(".").pop()!, state: "CONFIGURED", model: {}, inPorts: 2, outPorts: 2, x: 0,
+      id, name: n.factory.split(".").pop()!, state: "CONFIGURED", model: {}, inPorts: 2, outPorts: 2, x: 0, y: 0,
       ...this.defaults[n.factory], ...n,
     };
     node.id = id;
@@ -65,6 +70,30 @@ export class FakeKnime implements Transport {
 
   /** What /status reports as capabilities. */
   capabilities: Record<string, boolean> = { settingsSaveCheck: true, saveRefreshesUi: true, workflowSvg: true };
+
+  /** An annotation as KNIME would hold it after add + update. */
+  annotate(a: { text?: string; contentType?: string; bounds?: WorkflowAnnotationEnt["bounds"]; borderColor?: string }): WorkflowAnnotationEnt {
+    const ent: WorkflowAnnotationEnt = {
+      id: this.#freeAnnotationId(), bounds: a.bounds ?? { x: 0, y: 0, width: 100, height: 50 },
+      text: { value: a.text ?? "", contentType: a.contentType ?? "text/html" },
+      borderColor: a.borderColor ?? "#C0C4C6", backgroundColor: "#FFFFFF", borderWidth: 10,
+    };
+    this.annotations.push(ent);
+    return ent;
+  }
+
+  #freeAnnotationId(): string {
+    const used = new Set(this.annotations.map((a) => a.id));
+    let i = 0;
+    while (used.has(`root_${i}`)) i++;
+    return `root_${i}`;
+  }
+
+  #annotation(id: unknown): WorkflowAnnotationEnt {
+    const a = this.annotations.find((x) => x.id === String(id));
+    if (!a) throw new RpcError(-32600, `Annotation not found\n * No workflow annotation found for id ${String(id)}`, null);
+    return a;
+  }
 
   async status(): Promise<Status> {
     const problems = Object.entries(this.capabilities).filter(([, v]) => !v).map(([k]) => [k, `${k} not found`]);
@@ -136,14 +165,17 @@ export class FakeKnime implements Transport {
         const nodes: WorkflowRead["workflow"]["nodes"] = {};
         for (const n of this.nodes.values()) {
           nodes[n.id] = {
-            id: n.id, kind: "node", templateId: n.factory, position: { x: n.x, y: 0 },
+            id: n.id, kind: "node", templateId: n.factory, position: { x: n.x, y: n.y },
             annotation: n.label ? { text: { value: n.label, contentType: "text/plain" } } : undefined,
             inPorts: Array.from({ length: n.inPorts }, (_, index) => ({ index })),
             outPorts: Array.from({ length: n.outPorts }, (_, index) => (n.imagePorts?.includes(index)
               ? { index, name: "Output Image", typeId: IMAGE_PORT_TYPE, portGroupId: "Output Image" } : { index })),
           };
         }
-        return { contentHash: "h", workflow: { nodes, connections: Object.fromEntries(this.connections.map((c) => [c.id, c])) } };
+        return {
+          contentHash: "h",
+          workflow: { nodes, connections: Object.fromEntries(this.connections.map((c) => [c.id, c])), workflowAnnotations: structuredClone(this.annotations) },
+        };
       }
       case "/api/workflow/state":
         return { stateHash: "s", dirty: this.dirty, nodes: [...this.nodes.values()].map((n) => ({ nodeId: n.id, name: n.name, state: n.state })) };
@@ -256,7 +288,8 @@ export class FakeKnime implements Transport {
   #command(cmd: Record<string, unknown>): unknown {
     switch (cmd.kind) {
       case "add_node": {
-        const n = this.add({ factory: (cmd.nodeFactory as { className: string }).className, x: (cmd.position as { x: number })?.x ?? 0 });
+        const pos = cmd.position as { x: number; y: number } | undefined;
+        const n = this.add({ factory: (cmd.nodeFactory as { className: string }).className, x: pos?.x ?? 0, y: pos?.y ?? 0 });
         return { kind: "add_node", newNodeId: n.id };
       }
       case "add_port": {
@@ -279,7 +312,33 @@ export class FakeKnime implements Transport {
         this.connect(src.id, Number(cmd.sourcePortIdx), dst.id, Number(cmd.destinationPortIdx));
         return {};
       }
+      case "add_workflow_annotation": {
+        const a = this.annotate({ bounds: cmd.bounds as WorkflowAnnotationEnt["bounds"], borderColor: hexColour(cmd.borderColor) });
+        return { kind: "add_annotation_result", newAnnotationId: a.id, snapshotId: "1" };
+      }
+      case "update_workflow_annotation": {
+        const a = this.#annotation(cmd.annotationId);
+        if (cmd.text == null && cmd.borderColor == null) throw new RpcError(-32600, "Failed to update annotation", null);
+        if (cmd.text != null) a.text = { value: String(cmd.text), contentType: "text/html" };
+        else a.text = { value: a.text?.value ?? "", contentType: "text/html" };
+        if (cmd.borderColor != null) a.borderColor = hexColour(cmd.borderColor);
+        return null;
+      }
+      case "transform_workflow_annotation":
+        this.#annotation(cmd.annotationId).bounds = structuredClone(cmd.bounds as WorkflowAnnotationEnt["bounds"]);
+        return null;
+      case "reorder_workflow_annotations": {
+        const ids = (cmd.annotationIds as string[]).map((id) => this.#annotation(id).id);
+        const moving = this.annotations.filter((a) => ids.includes(a.id));
+        const rest = this.annotations.filter((a) => !ids.includes(a.id));
+        if (cmd.action === "send_to_back") this.annotations = [...moving, ...rest];
+        else if (cmd.action === "bring_to_front") this.annotations = [...rest, ...moving];
+        else throw new RpcError(-32600, `fake: reorder ${String(cmd.action)} not modelled`, null);
+        return null;
+      }
       case "delete": {
+        for (const id of (cmd.annotationIds as string[] | undefined) ?? []) this.#annotation(id);
+        this.annotations = this.annotations.filter((a) => !((cmd.annotationIds as string[] | undefined) ?? []).includes(a.id));
         for (const id of cmd.nodeIds as string[]) this.nodes.delete(id);
         const gone = new Set(cmd.connectionIds as string[]);
         this.connections = this.connections.filter((c) => !gone.has(c.id!) && this.nodes.has(c.sourceNode) && this.nodes.has(c.destNode));
@@ -299,6 +358,14 @@ export class FakeKnime implements Transport {
       .map((c) => c.body.workflowCommand as Record<string, unknown>)
       .filter((c) => !kind || c.kind === kind);
   }
+}
+
+/** Like the gateway's Integer.decode: hex with # or 0x, else "Failed to parse color". Read back as #RRGGBB. */
+function hexColour(c: unknown): string | undefined {
+  if (c == null) return undefined;
+  const m = /^(?:#|0x)([0-9a-f]{1,6})$/i.exec(String(c));
+  if (!m) throw new RpcError(-32600, `Failed to parse color\n * Invalid hex string <${String(c)}>`, null);
+  return `#${m[1]!.padStart(6, "0").toUpperCase()}`;
 }
 
 /** Patches existing keys only, like the server; returns whether anything changed. */
