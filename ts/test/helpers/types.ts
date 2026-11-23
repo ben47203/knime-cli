@@ -110,6 +110,62 @@ export interface SetResult {
   redacted: string[];
 }
 
+/** One column of a table spec. */
+export interface ColumnSpec {
+  name: string;
+  /** KNIME's display name of the type, e.g. `String`, `Number (Integer)`. */
+  type: string;
+  domain?: {
+    /** Possible values of a nominal column, at most 50; `valuesTruncated` and `valueCount` say when there were more. */
+    values?: Json[];
+    valuesTruncated?: boolean;
+    valueCount?: number;
+    lower?: Json;
+    upper?: Json;
+  };
+}
+
+/** A port spec: tables in full, flow-variable ports with no variables, anything else by kind only. */
+export type PortSpec =
+  | { kind: "table"; columns: ColumnSpec[] }
+  | { kind: "flowVariables" }
+  | { kind: "inactive" }
+  | { kind: string; columns?: never };
+
+/** The other end of a connection. */
+export interface PortEnd {
+  nodeId: string;
+  index: number;
+}
+
+interface PortBase {
+  index: number;
+  name?: string;
+  /** Port type name, e.g. `Table`, `Flow Variable`. */
+  type: string;
+  optional?: true;
+  /** Null until the spec is known (the node, or for an input its predecessor, isn't configured); see `reason`. */
+  spec: PortSpec | null;
+  reason?: string;
+  summary?: string;
+}
+
+export interface InputPort extends PortBase {
+  connected: boolean;
+  connectedFrom?: PortEnd;
+}
+
+export interface OutputPort extends PortBase {
+  connectedTo: PortEnd[];
+}
+
+/** `/api/node/ports` */
+export interface NodePorts {
+  nodeId: string;
+  inputs: InputPort[];
+  outputs: OutputPort[];
+}
+
 /** Result of the gateway's `add_node` command. */
 export interface AddNodeResult {
   kind: string;
