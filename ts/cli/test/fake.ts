@@ -174,7 +174,7 @@ export class FakeKnime implements Transport {
         }
         return {
           contentHash: "h",
-          workflow: { nodes, connections: Object.fromEntries(this.connections.map((c) => [c.id, c])), workflowAnnotations: structuredClone(this.annotations) },
+          workflow: { nodes, connections: Object.fromEntries(this.connections.map((c) => [c.id, c])), workflowAnnotations: this.annotations.map(knimeOrder) },
         };
       }
       case "/api/workflow/state":
@@ -358,6 +358,12 @@ export class FakeKnime implements Transport {
       .map((c) => c.body.workflowCommand as Record<string, unknown>)
       .filter((c) => !kind || c.kind === kind);
   }
+}
+
+/** The gateway's JSON lists bounds as width, y, height, x; keep that, so nothing relies on key order. */
+function knimeOrder(a: WorkflowAnnotationEnt): WorkflowAnnotationEnt {
+  const { x, y, width, height } = a.bounds;
+  return { ...structuredClone(a), bounds: { width, y, height, x } };
 }
 
 /** Like the gateway's Integer.decode: hex with # or 0x, else "Failed to parse color". Read back as #RRGGBB. */

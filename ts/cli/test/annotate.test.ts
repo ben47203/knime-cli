@@ -162,3 +162,10 @@ test("annotate rm refuses untagged annotations without --force and short prefixe
   assert.equal((await knime(k, "annotate", "rm", "0", "--force")).code, 0);
   assert.equal(k.annotations.length, 0);
 });
+
+test("bounds print as x,y,w,h although KNIME's JSON orders the keys differently", async () => {
+  const k = workflow();
+  await knime(k, "annotate", "add", "--tag", "my:b", "--bounds", "10,20,300,400");
+  assert.match((await knime(k, "annotate", "list")).stdout, /root_1 .* 10,20,300,400 /);
+  assert.match((await knime(k, "annotate", "move", "my:b", "--by", "5,5")).stdout, /at 15,25,300,400/);
+});

@@ -78,6 +78,9 @@ export function parseBounds(text: string): Bounds {
   return { x, y, width, height };
 }
 
+/** `x,y,w,h`, the way --bounds takes it. Not Object.values: KNIME's JSON lists the keys in another order. */
+export const formatBounds = (b: Bounds) => `${b.x},${b.y},${b.width},${b.height}`;
+
 export const sameBounds = (a: Bounds | undefined, b: Bounds | undefined) =>
   !!a && !!b && a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
 

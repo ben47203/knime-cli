@@ -1,5 +1,5 @@
 import {
-  bodyHtml, boundsAround, checkTag, composeHtml, DEFAULT_COLOUR, PALETTE, parseBounds, parseColour, sameBounds,
+  bodyHtml, boundsAround, checkTag, composeHtml, DEFAULT_COLOUR, formatBounds, PALETTE, parseBounds, parseColour, sameBounds,
   textLines, type AnnotationView, type Bounds,
 } from "../annotations.ts";
 import { arg, str, type Command, type Ctx, type OptionSpec } from "../cli.ts";
@@ -114,7 +114,7 @@ export const annotateAdd: Command = {
     if (!tag) ctx.warn("no --tag: tag your annotations so later runs can find them (ids are reused after deletes)");
     return {
       data: { id, tag, bounds: placed.bounds, colour: borderColor, around: placed.around },
-      text: [`added ${id}${tag ? ` [[${tag}]]` : ""} at ${Object.values(placed.bounds).join(",")}`],
+      text: [`added ${id}${tag ? ` [[${tag}]]` : ""} at ${formatBounds(placed.bounds)}`],
     };
   },
 };
@@ -140,7 +140,7 @@ export const annotateList: Command = {
       text: list.length
         ? [
           `${"id".padEnd(w.id)}  ${"tag".padEnd(w.tag)}  ${"colour".padEnd(14)}  ${"x,y,w,h".padEnd(19)}  text`,
-          ...list.map((a) => `${a.id.padEnd(w.id)}  ${(a.tag ?? "").padEnd(w.tag)}  ${(a.colourName ?? a.colour ?? "").padEnd(14)}  ${Object.values(a.bounds).join(",").padEnd(19)}  ${firstLine(a.text)}`),
+          ...list.map((a) => `${a.id.padEnd(w.id)}  ${(a.tag ?? "").padEnd(w.tag)}  ${(a.colourName ?? a.colour ?? "").padEnd(14)}  ${formatBounds(a.bounds).padEnd(19)}  ${firstLine(a.text)}`),
         ]
         : [prefix !== undefined ? `no annotations tagged ${prefix}*` : "no annotations"],
     };
@@ -224,7 +224,7 @@ export const annotateMove: Command = {
     const bounds = target?.bounds ?? a.bounds;
     return {
       data: { id: a.id, tag: a.tag, bounds, previous: a.bounds, moved: Boolean(moved), order, around: target?.around },
-      text: [`${describe(a)}: ${[moved ? `at ${Object.values(bounds).join(",")}` : target ? "already in place" : "", order ? `order ${order}` : ""].filter(Boolean).join(", ")}`],
+      text: [`${describe(a)}: ${[moved ? `at ${formatBounds(bounds)}` : target ? "already in place" : "", order ? `order ${order}` : ""].filter(Boolean).join(", ")}`],
     };
   },
 };
