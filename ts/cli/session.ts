@@ -5,8 +5,9 @@
 import { KnimeClient } from "../src/client.ts";
 import { listInstances, type Instance } from "../src/discovery.ts";
 import { CliError, EXIT, translate } from "./errors.ts";
+import { plainText, splitLabel } from "./text.ts";
 import type {
-  BinaryResponse, Connection, NodePorts, NodeState, Projects, Transport, WorkflowNode, WorkflowRead, WorkflowState,
+  BinaryResponse, Connection, NodePorts, NodeState, Projects, Transport, WorkflowRead, WorkflowState,
 } from "./types.ts";
 
 /** The plugin API version the CLI was written against. */
@@ -41,7 +42,10 @@ export function pickInstance(instances: readonly Instance[], pid?: string): Inst
 
 export interface NodeView {
   id: string;
+  /** First line of the node's annotation: what lookup, `--prefix` and `apply` match. */
   label?: string;
+  /** Further lines of the annotation: a human note (`knime node note`). */
+  note?: string;
   name: string;
   kind: string;
   factory?: string;
@@ -69,9 +73,11 @@ export class Snapshot {
     const templates = read.workflow.nodeTemplates ?? {};
     this.nodes = Object.values(read.workflow.nodes ?? {}).map((n) => {
       const s = states.get(n.id);
+      const { label, note } = splitLabel(plainText(n.annotation?.text));
       return {
         id: n.id,
-        label: labelOf(n),
+        label,
+        note,
         name: s?.name ?? n.name ?? (n.templateId ? templates[n.templateId]?.name : undefined) ?? n.kind ?? "?",
         kind: n.kind ?? "node",
         factory: n.templateId,
@@ -168,13 +174,6 @@ export class Snapshot {
     const xs = this.nodes.filter((n) => !exclude?.(n)).map((n) => n.position?.x ?? 0);
     return xs.length ? Math.max(...xs) : 0;
   }
-}
-
-function labelOf(n: WorkflowNode): string | undefined {
-  const text = n.annotation?.text;
-  if (!text?.value) return undefined;
-  const v = text.contentType === "text/html" ? text.value.replace(/<[^>]*>/g, "") : text.value;
-  return v.trim() || undefined;
 }
 
 function idOrder(id: string): number {

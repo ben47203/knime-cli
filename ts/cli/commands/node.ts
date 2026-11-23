@@ -7,6 +7,7 @@ import { coerce, formatChanges, parseAssignment, planAssignments, planObject, Pa
 import { flatten, isObject } from "../paths.ts";
 import { connectExplained, portLines } from "../ports.ts";
 import type { NodeView, Session } from "../session.ts";
+import { joinLabel } from "../text.ts";
 import { buildPreset } from "../presets.ts";
 import type { Json, JsonObject, SetResult, Settings } from "../types.ts";
 
@@ -32,6 +33,7 @@ export const nodeAdd: Command = {
   args: "<alias|factory>",
   options: {
     label: { type: "string", arg: "<text>", desc: "Label to put under the node (recommended: a prefix of yours, e.g. my:reader)" },
+    note: { type: "string", arg: "<text>", desc: "A human-readable note below the label (see `knime node note --help`)" },
     at: { type: "string", arg: "<x,y>", desc: "Position in workflow coordinates (default: right of everything)" },
     from: { type: "string", arg: "<node[:port]>", desc: "Connect this output (port default 1) to the new node's input 1" },
   },
@@ -52,15 +54,16 @@ export const nodeAdd: Command = {
       position = { x: from.node.position.x + 170, y: from.node.position.y };
     }
     const label = str(ctx, "label");
+    const note = str(ctx, "note")?.replace(/\\n/g, "\n").trim() || undefined;
     if (label && snap.withLabel(label).length) ctx.warn(`label "${label}" is already on ${snap.withLabel(label).map((n) => n.id).join(", ")}`);
     const r = await s.command<{ newNodeId: string }>({ kind: "add_node", nodeFactory: { className: factory }, position }, `add ${alias ?? factory}`);
     const id = r.newNodeId;
-    if (label) await s.command({ kind: "update_node_label", nodeId: id, label }, `label ${id}`);
+    if (label || note) await s.command({ kind: "update_node_label", nodeId: id, label: joinLabel(label, note) }, `label ${id}`);
     if (from) {
       await connectExplained(s, { node: from.node.id, port: from.port }, { node: id, port: 1 }, `connect ${from.node.id}:${from.port} → ${id}:1`);
     }
     if (!label) ctx.warn("no --label: label your nodes so later runs can find them (ids are reused after deletes)");
-    return { data: { id, label, factory, alias, position, connectedFrom: from && `${from.node.id}:${from.port}` }, text: [`added ${id}${label ? ` [${label}]` : ""} (${alias ?? factory})`] };
+    return { data: { id, label, note, factory, alias, position, connectedFrom: from && `${from.node.id}:${from.port}` }, text: [`added ${id}${label ? ` [${label}]` : ""} (${alias ?? factory})`] };
   },
 };
 
@@ -90,18 +93,58 @@ export const nodeConnect: Command = {
 export const nodeLabel: Command = {
   path: ["node", "label"],
   tier: "WRITE",
-  summary: "Set the label (annotation) under a node; labels are how you find your nodes again",
+  summary: "Set the label (first line of the annotation under a node); labels are how you find your nodes again",
   args: "<node> <label>",
+  notes: [
+    "A label is one line. The node's note (further lines, `knime node note`) is kept.",
+  ],
   examples: ["knime node label root:7 my:reader"],
   async run(ctx) {
     const s = await ctx.session();
     const snap = await s.snapshot();
     const n = snap.resolve(arg(ctx, 0, "node"));
-    const label = arg(ctx, 1, "label");
+    const label = arg(ctx, 1, "label").trim();
+    if (!label || label.includes("\n")) throw usage("A label is one non-empty line", "Put longer text in a note: `knime node note <node> <text>`.");
     const clash = snap.withLabel(label).filter((x) => x.id !== n.id);
     if (clash.length) ctx.warn(`label "${label}" is also on ${clash.map((x) => x.id).join(", ")}`);
-    await s.command({ kind: "update_node_label", nodeId: n.id, label }, `label ${n.id}`);
-    return { data: { id: n.id, label, previous: n.label }, text: [`${n.id}: ${n.label ? `"${n.label}" → ` : ""}"${label}"`] };
+    await s.command({ kind: "update_node_label", nodeId: n.id, label: joinLabel(label, n.note) }, `label ${n.id}`);
+    return { data: { id: n.id, label, previous: n.label, note: n.note }, text: [`${n.id}: ${n.label ? `"${n.label}" → ` : ""}"${label}"`] };
+  },
+};
+
+export const nodeNote: Command = {
+  path: ["node", "note"],
+  tier: "WRITE",
+  summary: "Set a human-readable note under a node, below its label (which is kept)",
+  args: "<node> [text…]",
+  options: {
+    clear: { type: "boolean", desc: "Remove the note, keeping the label" },
+  },
+  notes: [
+    "KNIME has one annotation field under a node. The CLI reads its first line as the label (the machine",
+    "name that lookup, --prefix and `apply` match) and the lines after it as the note. So a note never",
+    "changes how the node is found, and `node label` and `apply` keep it. Words are joined with spaces;",
+    "\\n in the text starts a new line. On an unlabelled node the note goes below an empty first line, so",
+    "it isn't mistaken for a label. Undoable in KNIME.",
+  ],
+  examples: ["knime node note my:reader \"Reads the 2024 extract; refresh monthly\"", "knime node note my:reader --clear"],
+  async run(ctx) {
+    const s = await ctx.session();
+    const snap = await s.snapshot();
+    const n = snap.resolve(arg(ctx, 0, "node"));
+    const words = ctx.positionals.slice(1);
+    if (!words.length && !ctx.values.clear) throw usage("Give the note text, or --clear");
+    if (words.length && ctx.values.clear) throw usage("Give either note text or --clear, not both");
+    const note = words.join(" ").replace(/\\n/g, "\n").trim() || undefined;
+    if (note && !n.label) ctx.warn(`${n.id} has no label; the note sits below an empty first line. Label it with \`knime node label\` so you can find it again`);
+    if ((note ?? "") === (n.note ?? "")) {
+      return { data: { id: n.id, label: n.label, note, changed: false }, text: [`${n.id}: note unchanged`] };
+    }
+    await s.command({ kind: "update_node_label", nodeId: n.id, label: joinLabel(n.label, note) }, `note ${n.id}`);
+    return {
+      data: { id: n.id, label: n.label, note, previous: n.note, changed: true },
+      text: [note ? `${describe(n)}: note set` : `${describe(n)}: note removed`],
+    };
   },
 };
 
