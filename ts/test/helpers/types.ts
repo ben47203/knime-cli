@@ -36,6 +36,8 @@ export interface NodeStatus extends NodeState {
 /** `/api/workflow/state` */
 export interface WorkflowState {
   stateHash: string;
+  /** Whether the whole project has unsaved changes. */
+  dirty: boolean;
   nodes: NodeState[];
 }
 
@@ -48,7 +50,22 @@ export interface WorkflowErrors {
 
 /** `/api/projects` */
 export interface Projects {
-  projects: { projectId: string; name: string | null }[];
+  /** `dirty` is null for a project that isn't loaded. */
+  projects: { projectId: string; name: string | null; dirty: boolean | null }[];
+}
+
+/** `/api/project/state`, and `/api/project/save` with `saved: true`. */
+export interface ProjectState {
+  projectId: string;
+  name: string;
+  dirty: boolean;
+  path?: string;
+  canSave: boolean;
+  /** Why `canSave` is false; absent when it is true. */
+  saveBlocked?: string;
+  /** Present (true) while any node executes. */
+  executing?: true;
+  saved?: true;
 }
 
 /** One node of the gateway workflow entity; only the fields the tests use. */

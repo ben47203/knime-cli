@@ -66,6 +66,14 @@ describe("/api/projects", () => {
     }
     assert.ok(projects.some((p) => p.projectId === fx.target.projectId));
   });
+
+  test("says which projects have unsaved changes", async () => {
+    const { projects } = await fx.client.api<Projects>("/api/projects");
+    const ours = projects.find((p) => p.projectId === fx.target.projectId);
+    assert.equal(typeof ours?.dirty, "boolean", "an open project in the UI is loaded");
+    const state = await fx.client.api<WorkflowState>("/api/workflow/state", fx.target);
+    assert.equal(ours?.dirty, state.dirty);
+  });
 });
 
 describe("/api/workflow", () => {
