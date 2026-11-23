@@ -199,8 +199,11 @@ export const annotateMove: Command = {
     by: { type: "string", arg: "<dx,dy>", desc: "Shift by this much, keeping the size" },
     order: { type: "string", arg: "<front|back|forward|backward>", desc: "Bring to front, send to back, or one step" },
   },
-  notes: ["--around re-fits the box, e.g. after adding nodes to a stage. Undoable in KNIME."],
-  examples: ["knime annotate move my:prep --prefix my:prep-", "knime annotate move root_0 --by 0,200", "knime annotate move my:models --order back"],
+  notes: [
+    "--around re-fits the box, e.g. after adding nodes to a stage. A value starting with a minus needs `=`:",
+    "--by=-300,0, --bounds=-50,0,200,100. Undoable in KNIME.",
+  ],
+  examples: ["knime annotate move my:prep --prefix my:prep-", "knime annotate move root_0 --by=-200,0", "knime annotate move my:models --order back"],
   async run(ctx) {
     const s = await ctx.session();
     const snap = await s.snapshot();
