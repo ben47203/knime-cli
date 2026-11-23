@@ -23,6 +23,10 @@ export interface Status {
   knimeVersion: string;
   pid: number;
   ready: boolean;
+  /** Whether each KNIME internal the plugin reaches by reflection was found at start-up. */
+  capabilities: Record<string, boolean>;
+  /** Why, for each capability that is false; absent when all are true. */
+  capabilityProblems?: Record<string, string>;
 }
 
 /** A non-JSON `/api/*` response, such as an image. */
