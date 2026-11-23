@@ -25,6 +25,12 @@ export interface Status {
   ready: boolean;
 }
 
+/** A non-JSON `/api/*` response, such as an image. */
+export interface BinaryResponse {
+  contentType: string;
+  bytes: Buffer;
+}
+
 /** Thin client for one KNIME instance. Gateway methods are addressed as `Service.method` with named params. */
 export class KnimeClient {
   readonly instance: Instance;
@@ -75,6 +81,16 @@ export class KnimeClient {
       body: JSON.stringify(body),
     });
     return res.json() as Promise<T>;
+  }
+
+  /** An `/api/*` route that answers with raw bytes, such as an image. Errors still come back as JSON. */
+  async apiBytes(path: string, body: Record<string, unknown> = {}): Promise<BinaryResponse> {
+    const res = await this.#request(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return { contentType: res.headers.get("Content-Type") ?? "", bytes: Buffer.from(await res.arrayBuffer()) };
   }
 
   /** Allowlisted gateway methods only (see RpcAllowlist in the plugin); others return JSON-RPC error -32001. */
