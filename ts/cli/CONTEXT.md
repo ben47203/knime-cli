@@ -76,11 +76,22 @@ Every command takes `--json` (machine-readable output, errors included) and show
 - Long executes are fine: only gateway commands have the 30 s limit, and `run` keeps waiting (a 253 s MLP run never hit a 504).
 - **Tune cheaply:** changing a node's settings resets only its downstream branch, so re-running just the final node (e.g. the metrics writer) re-executes only what changed: 10–25 s per trial instead of a full rebuild.
 
+## Reading tables {#tables}
+- `knime node table <node>[:port]` returns the rows of the table on an output port. The port defaults to 1, the first data port (0 is the flow-variable port): `my:predict`, `my:partition:2`, `root:12:1`. A metanode has no flow-variable port, so its ports (and the default) start at 0. For a node inside a metanode or component, pass `--workflow <its id>`.
+- **Read-only, so execute first:** it reads the table the node already holds and never runs or configures anything. A node that hasn't executed fails with **NODE_NOT_EXECUTED** (exit 8; the message and `details.state` give its state) rather than returning an empty table. Run it with `knime run <node>`, then read.
+- **Output:** JSON by default, the plugin's page: `{nodeId, port, totalRows, offset, returned, columns: [{name, type}], rows: [{rowId, cells}]}`. Without `--json` it's printed one row per line; with `--json` it's the envelope's `data`. Column types are KNIME's names (`String`, `Number (Float)`, `Number (Integer)`), as in `node ports`.
+- **Cells:** numbers are JSON numbers at full double precision (they read back to the same double), integers as integers, booleans as booleans, missing values `null`, NaN and ±Infinity as the strings `"NaN"`, `"Infinity"`, `"-Infinity"`. Everything else (text, dates, collections) is its text.
+- **Paging:** `--limit` (default 1000; `0` gives just the columns and `totalRows`) and `--offset` (from 0). An offset past the end gives no rows and the right `totalRows`. `--limit all` reads the whole table; the CLI fetches it in pages of up to 50,000 rows (fewer for wide tables) and joins them.
+- **Columns:** `--columns 'Churned,P (Churned=1)_gbt1'` picks columns by exact name, in that order; CSV-quote a name with a comma. An unknown name fails with **COLUMN_NOT_FOUND**, listing the available columns.
+- **CSV:** `--csv` writes a header row with `RowID` first, RFC 4180 quoting, numbers at full precision, missing values as empty fields, and LF line ends. `-o file` writes JSON or CSV to a file and reports the path and row count (on stderr, or as `file` in the `--json` envelope, without the rows). `--csv --json` needs `-o`.
+- **Errors:** **PORT_OUT_OF_RANGE** (exit 7: the message lists the node's output ports by index, name and type), **NOT_A_TABLE** (exit 7: a model, image or flow-variable port), **TABLE_INACTIVE** (exit 8: an inactive branch), **TABLE_CHANGED** (exit 6: the node was reset or re-run during the read; read again).
+- Example, an ML check: `knime run my:predict && knime node table my:predict --limit all --columns 'Churned,Prediction (Churned)' --csv -o preds.csv`.
+
 ## Errors {#errors}
 Errors come back with a stable exit code, a cause and a next step; with `--json` they're printed to stdout as `{"ok": false, "error": {"code", "message", "cause", "hint"}}`. The table below is generated from the CLI's error translations.
 
 ## Data in and out {#data}
-- There's no table-preview endpoint yet. Port summaries are just "Rows: N, Cols: M", so results must be written to CSV with a CSV Writer and read from disk. Column names and types are known, though: `knime node ports <node>`.
+- Read an executed node's output table straight from KNIME with `knime node table <node>[:port]`, as JSON or CSV (see the tables topic). A CSV Writer is only needed for files KNIME itself should keep. Column names and types without executing: `knime node ports <node>`.
 - Charts come out as files: `knime node image <chart> --enable -o chart.png` (see the images topic).
 - Paths in settings are local filesystem paths on the KNIME host.
 
