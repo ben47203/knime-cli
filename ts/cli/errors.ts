@@ -86,6 +86,37 @@ export const TRANSLATIONS: readonly Translation[] = [
     cause: "KNIME's UI hasn't finished initialising, so the API isn't available yet.",
     hint: "Wait a few seconds and retry, or run `knime status --wait 60`.",
   },
+  // node table: before the catch-alls for 400 and 409. The plugin's messages carry no fields, so they're matched by text.
+  {
+    code: "PORT_OUT_OF_RANGE", exit: EXIT.REJECTED, status: 400, match: /no output port \d+ on /i,
+    cause: "The node has no output port with that number. Port 0 is the flow-variable port, so data ports start at 1.",
+    hint: "The message lists the node's output ports (also in `details` with --json); address one as <node>:<port>.",
+  },
+  {
+    code: "NOT_A_TABLE", exit: EXIT.REJECTED, status: 400, match: /not a table port/i,
+    cause: "That output port holds a model, image or flow variables, not a table. Port 0 is always the flow-variable port.",
+    hint: "Pick a table port from the list in the message; learners often have their table on port 1 and the model on a higher port.",
+  },
+  {
+    code: "COLUMN_NOT_FOUND", exit: EXIT.NOT_FOUND, status: 400, match: /unknown column/i,
+    cause: "--columns names a column that isn't in the table. Names are exact and case-sensitive.",
+    hint: "The message lists the available columns; `knime node table <node> --limit 0` prints just the columns.",
+  },
+  {
+    code: "TABLE_INACTIVE", exit: EXIT.INCOMPLETE, status: 409, match: /inactive branch, so it holds no table/i,
+    cause: "The port is on an inactive branch (an IF Switch or similar switched it off), so it has no table.",
+    hint: "Read the active branch instead, or change the switch upstream and run again.",
+  },
+  {
+    code: "NODE_NOT_EXECUTED", exit: EXIT.INCOMPLETE, status: 409, match: /holds no table until/i,
+    cause: "A port has a table only once its node has executed; reading never runs anything. The message says the node's state.",
+    hint: "Run it first (`knime run <node>`), then read the table again.",
+  },
+  {
+    code: "TABLE_CHANGED", exit: EXIT.CONFLICT, status: 409, match: /changed while it was read/i,
+    cause: "The node was reset or re-executed while its table was being read, so the rows would have been inconsistent.",
+    hint: "Wait for the node to finish (`knime run <node>` waits), then read again.",
+  },
   {
     code: "INVALID_NODE_ID", exit: EXIT.REJECTED, status: 400, match: /invalid (nodeId|workflowId|nodeIds)/i,
     cause: "Node ids look like root:7 (or root:5:0:3 inside a metanode or component).",
