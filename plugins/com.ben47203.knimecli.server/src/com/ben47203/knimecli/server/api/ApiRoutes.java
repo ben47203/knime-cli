@@ -12,6 +12,7 @@ import com.ben47203.knimecli.server.api.settings.SettingsApi;
 import com.ben47203.knimecli.server.api.workflow.CanvasApi;
 import com.ben47203.knimecli.server.api.workflow.GatewayReadApi;
 import com.ben47203.knimecli.server.api.workflow.StatusApi;
+import com.ben47203.knimecli.server.api.table.TableApi; // out of order: keeps cherry-picks onto cli-test clean
 import com.ben47203.knimecli.server.http.LocalApiServer.ApiHandler;
 
 /**
@@ -29,6 +30,7 @@ public final class ApiRoutes {
         endpoints.addAll(StatusApi.endpoints());
         endpoints.addAll(ExecutionApi.endpoints());
         endpoints.addAll(SettingsApi.endpoints());
+        endpoints.addAll(TableApi.endpoints());
         endpoints.addAll(PortsApi.endpoints());
         endpoints.addAll(ProjectApi.endpoints());
         endpoints.addAll(CanvasApi.endpoints());
