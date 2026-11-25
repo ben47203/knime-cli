@@ -6,7 +6,7 @@
  */
 import { HttpError, RpcError } from "../../src/client.ts";
 import { Session } from "../session.ts";
-import type { Connection, ExecResult, Json, JsonObject, State, Status, Transport, WorkflowRead } from "../types.ts";
+import type { BinaryResponse, ColumnSpec, Connection, ExecResult, Json, JsonObject, State, Status, Transport, WorkflowRead } from "../types.ts";
 
 export interface FakeNode {
   id: string;
@@ -24,7 +24,13 @@ export interface FakeNode {
   inPorts: number;
   outPorts: number;
   x: number;
+  /** The table spec of every data output, known once the node has executed. */
+  columns?: ColumnSpec[];
+  /** Output ports that are image ports ("Output Image" group). */
+  imagePorts?: number[];
 }
+
+export const IMAGE_PORT_TYPE = "org.knime.core.node.port.image.ImagePortObject";
 
 export class FakeKnime implements Transport {
   nodes = new Map<string, FakeNode>();
@@ -35,6 +41,11 @@ export class FakeKnime implements Transport {
   timeoutNext?: string;
   /** Per-factory defaults for new nodes. */
   defaults: Record<string, Partial<FakeNode>> = {};
+  /** Unsaved changes: set by every workflow command and settings change. */
+  dirty = false;
+  /** Why the project can't be saved in place, if it can't. */
+  saveBlocked?: string;
+  saves = 0;
 
   add(n: Partial<FakeNode> & { factory: string }): FakeNode {
     const id = `root:${this.next++}`;
@@ -52,8 +63,35 @@ export class FakeKnime implements Transport {
     this.connections.push({ id: `${to}_${toPort}`, sourceNode: from, sourcePort: fromPort, destNode: to, destPort: toPort });
   }
 
+  /** What /status reports as capabilities. */
+  capabilities: Record<string, boolean> = { settingsSaveCheck: true, saveRefreshesUi: true, workflowSvg: true };
+
   async status(): Promise<Status> {
-    return { apiVersion: 2, knimeVersion: "5.12.0", pid: 1, ready: true };
+    const problems = Object.entries(this.capabilities).filter(([, v]) => !v).map(([k]) => [k, `${k} not found`]);
+    return { apiVersion: 2, knimeVersion: "5.12.0", pid: 1, ready: true, capabilities: this.capabilities, ...(problems.length ? { capabilityProblems: Object.fromEntries(problems) } : {}) };
+  }
+
+  async apiBytes(path: string, body: Record<string, unknown> = {}): Promise<BinaryResponse> {
+    this.calls.push({ method: path, body });
+    switch (path) {
+      case "/api/node/port/image": {
+        const n = this.#node(body.nodeId);
+        const port = Number(body.port);
+        if (!n.imagePorts?.includes(port)) throw new HttpError(400, `Output port ${port} of ${n.name} is a Table port, not an image port`);
+        if (n.state !== "EXECUTED") throw new HttpError(409, `Output port ${port} of ${n.name} holds no image until the node executes (it is ${n.state})`);
+        const svg = n.model.imageFormat === "SVG";
+        if (svg) return { contentType: "image/svg+xml", bytes: Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${n.model.width}" height="${n.model.height}"/>`) };
+        const png = Buffer.alloc(33);
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]).copy(png);
+        png.writeUInt32BE(Number(n.model.width), 16);
+        png.writeUInt32BE(Number(n.model.height), 20);
+        return { contentType: "image/png", bytes: png };
+      }
+      case "/api/workflow/svg":
+        return { contentType: "image/svg+xml; charset=utf-8", bytes: Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="300" height="120" viewBox="0 0 300 120"><text>${this.nodes.size} nodes</text></svg>`) };
+      default:
+        throw new HttpError(404, `No route ${path}`);
+    }
   }
 
   async api<T>(path: string, body: Record<string, unknown> = {}): Promise<T> {
@@ -79,7 +117,21 @@ export class FakeKnime implements Transport {
   #api(path: string, body: Record<string, unknown>): unknown {
     switch (path) {
       case "/api/projects":
-        return { projects: [{ projectId: "p1", name: "Test" }] };
+        return { projects: [{ projectId: "p1", name: "Test", dirty: this.dirty }] };
+      case "/api/project/state":
+      case "/api/project/save": {
+        if (Object.keys(body).some((k) => k !== "projectId")) throw new HttpError(400, `Unknown field(s) in ${Object.keys(body).join(", ")}`);
+        if (body.projectId !== "p1") throw new HttpError(404, `No open project with id ${String(body.projectId)}`);
+        if (path === "/api/project/save") {
+          if (this.saveBlocked) throw new HttpError(409, `Can't save Test: ${this.saveBlocked}`);
+          this.dirty = false;
+          this.saves++;
+        }
+        return {
+          projectId: "p1", name: "Test", dirty: this.dirty, path: "/ws/Test", canSave: !this.saveBlocked,
+          ...(this.saveBlocked ? { saveBlocked: this.saveBlocked } : {}), ...(path === "/api/project/save" ? { saved: true } : {}),
+        };
+      }
       case "/api/workflow": {
         const nodes: WorkflowRead["workflow"]["nodes"] = {};
         for (const n of this.nodes.values()) {
@@ -87,13 +139,37 @@ export class FakeKnime implements Transport {
             id: n.id, kind: "node", templateId: n.factory, position: { x: n.x, y: 0 },
             annotation: n.label ? { text: { value: n.label, contentType: "text/plain" } } : undefined,
             inPorts: Array.from({ length: n.inPorts }, (_, index) => ({ index })),
-            outPorts: Array.from({ length: n.outPorts }, (_, index) => ({ index })),
+            outPorts: Array.from({ length: n.outPorts }, (_, index) => (n.imagePorts?.includes(index)
+              ? { index, name: "Output Image", typeId: IMAGE_PORT_TYPE, portGroupId: "Output Image" } : { index })),
           };
         }
         return { contentHash: "h", workflow: { nodes, connections: Object.fromEntries(this.connections.map((c) => [c.id, c])) } };
       }
       case "/api/workflow/state":
-        return { stateHash: "s", nodes: [...this.nodes.values()].map((n) => ({ nodeId: n.id, name: n.name, state: n.state })) };
+        return { stateHash: "s", dirty: this.dirty, nodes: [...this.nodes.values()].map((n) => ({ nodeId: n.id, name: n.name, state: n.state })) };
+      case "/api/node/ports": {
+        const n = this.#node(body.nodeId);
+        const out = (m: FakeNode, i: number) => {
+          if (i === 0) return { spec: { kind: "flowVariables" } };
+          if (m.imagePorts?.includes(i)) return m.state === "EXECUTED" ? { spec: { kind: "image", format: "png" } } : { spec: null, reason: "no spec until the node executes" };
+          return m.state === "EXECUTED" && m.columns ? { spec: { kind: "table", columns: m.columns } } : { spec: null, reason: "no spec until the node executes" };
+        };
+        return {
+          nodeId: n.id,
+          inputs: Array.from({ length: n.inPorts }, (_, index) => {
+            const c = this.connections.find((x) => x.destNode === n.id && x.destPort === index);
+            const src = c && this.nodes.get(c.sourceNode);
+            const spec = index === 0 ? { spec: { kind: "flowVariables" } } : src ? out(src, c.sourcePort) : { spec: null, reason: "not connected" };
+            return { index, type: index === 0 ? "Flow Variable" : "Table", connected: Boolean(c), ...(c ? { connectedFrom: { nodeId: c.sourceNode, index: c.sourcePort } } : {}), ...spec };
+          }),
+          outputs: Array.from({ length: n.outPorts }, (_, index) => ({
+            index, type: index === 0 ? "Flow Variable" : n.imagePorts?.includes(index) ? "Image" : "Table",
+            ...(n.imagePorts?.includes(index) ? { name: "Output Image" } : {}),
+            connectedTo: this.connections.filter((x) => x.sourceNode === n.id && x.sourcePort === index).map((x) => ({ nodeId: x.destNode, index: x.destPort })),
+            ...out(n, index),
+          })),
+        };
+      }
       case "/api/workflow/errors":
         return { errors: 0, warnings: 0, nodes: [] };
       case "/api/node/settings": {
@@ -106,6 +182,7 @@ export class FakeKnime implements Transport {
         const changed = merge(model, body.model as JsonObject, "");
         if (changed) {
           n.model = model;
+          this.dirty = true;
           for (const id of [n.id, ...this.#downstream(n.id)]) {
             const d = this.nodes.get(id)!;
             if (d.state === "EXECUTED") d.state = "CONFIGURED";
@@ -168,6 +245,7 @@ export class FakeKnime implements Transport {
     if (method !== "WorkflowService.executeWorkflowCommand") throw new RpcError(-32001, "Method not allowed", null);
     const cmd = params.workflowCommand as Record<string, unknown>;
     const result = this.#command(cmd);
+    this.dirty = true;
     if (this.timeoutNext === cmd.kind) {
       this.timeoutNext = undefined;
       throw new HttpError(504, "KNIME didn't confirm within 30000 ms");
@@ -180,6 +258,14 @@ export class FakeKnime implements Transport {
       case "add_node": {
         const n = this.add({ factory: (cmd.nodeFactory as { className: string }).className, x: (cmd.position as { x: number })?.x ?? 0 });
         return { kind: "add_node", newNodeId: n.id };
+      }
+      case "add_port": {
+        const n = this.#node(cmd.nodeId);
+        if (cmd.side !== "output" || cmd.portGroup !== "Output Image") throw new RpcError(-32600, `No port group ${String(cmd.portGroup)}`, null);
+        n.imagePorts = [...(n.imagePorts ?? []), n.outPorts];
+        n.outPorts++;
+        n.state = "CONFIGURED";
+        return { kind: "add_port_result", newPortIdx: n.outPorts - 1 };
       }
       case "update_node_label":
         this.#node(cmd.nodeId).label = String(cmd.label);

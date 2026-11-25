@@ -29,10 +29,29 @@ export interface Status {
   knimeVersion: string;
   pid: number;
   ready: boolean;
+  /** Whether each KNIME internal the plugin reaches by reflection was found (e.g. `workflowSvg`). */
+  capabilities?: Record<string, boolean>;
+  /** Why, for each capability that is false. */
+  capabilityProblems?: Record<string, string>;
 }
 
 export interface Projects {
-  projects: { projectId: string; name: string | null }[];
+  /** `dirty` (unsaved changes) is null for a project that isn't loaded. */
+  projects: { projectId: string; name: string | null; dirty?: boolean | null }[];
+}
+
+/** `/api/project/state`, and `/api/project/save` with `saved: true`. */
+export interface ProjectState {
+  projectId: string;
+  name: string;
+  dirty: boolean;
+  path?: string;
+  canSave: boolean;
+  /** Why `canSave` is false. */
+  saveBlocked?: string;
+  /** Present while any node executes. */
+  executing?: true;
+  saved?: true;
 }
 
 export interface PortEnt {
@@ -42,6 +61,8 @@ export interface PortEnt {
   info?: string;
   optional?: boolean;
   connectedVia?: string[];
+  /** The extendable port group the port belongs to, e.g. "Output Image". */
+  portGroupId?: string;
 }
 
 /** One node of the gateway workflow entity (`/api/workflow`). */
@@ -75,6 +96,8 @@ export interface WorkflowRead {
 
 export interface WorkflowState {
   stateHash: string;
+  /** Unsaved changes anywhere in the project, even when a metanode is addressed. */
+  dirty?: boolean;
   nodes: NodeState[];
 }
 
@@ -113,9 +136,68 @@ export interface SetResult {
   problem?: string;
 }
 
-/** The two calls the CLI needs from a KNIME connection; KnimeClient implements it, tests mock it. */
+/** A non-JSON `/api/*` response, such as an image. */
+export interface BinaryResponse {
+  contentType: string;
+  bytes: Buffer;
+}
+
+/** One column of a table spec. */
+export interface ColumnSpec {
+  name: string;
+  /** KNIME's display name of the type, e.g. `String`, `Number (Integer)`, `Number (Float)`. */
+  type: string;
+  domain?: { values?: Json[]; valuesTruncated?: boolean; valueCount?: number; lower?: Json; upper?: Json };
+}
+
+/** A port spec: tables in full, flow-variable ports with no variables, images with their format, others by kind. */
+export interface PortSpec {
+  /** "table", "image", "flowVariables", "inactive", or another port type's name. */
+  kind: string;
+  /** Tables only. */
+  columns?: ColumnSpec[];
+  /** Images only: "png" or "svg". */
+  format?: string;
+}
+
+export interface PortEnd {
+  nodeId: string;
+  index: number;
+}
+
+interface PortBase {
+  index: number;
+  name?: string;
+  /** Port type name, e.g. `Table`, `Flow Variable`, `Image`. */
+  type: string;
+  optional?: true;
+  /** Null until known (the node, or for an input its predecessor, isn't configured); `reason` says why. */
+  spec: PortSpec | null;
+  reason?: string;
+  summary?: string;
+}
+
+export interface InputPort extends PortBase {
+  connected: boolean;
+  connectedFrom?: PortEnd;
+}
+
+export interface OutputPort extends PortBase {
+  connectedTo: PortEnd[];
+}
+
+/** `/api/node/ports`: port 0 is the flow-variable port (metanodes have none). */
+export interface NodePorts {
+  nodeId: string;
+  inputs: InputPort[];
+  outputs: OutputPort[];
+}
+
+/** The calls the CLI needs from a KNIME connection; KnimeClient implements it, tests mock it. */
 export interface Transport {
   status(): Promise<Status>;
   api<T = unknown>(path: string, body?: Record<string, unknown>): Promise<T>;
+  /** An `/api/*` route answering with raw bytes (errors still come back as JSON). */
+  apiBytes(path: string, body?: Record<string, unknown>): Promise<BinaryResponse>;
   call<T = unknown>(method: string, params?: Record<string, unknown>): Promise<T>;
 }

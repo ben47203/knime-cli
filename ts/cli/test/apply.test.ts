@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { test } from "node:test";
 
 import { apply, expandEnv, parseEndpoint, planApply, resolveSpec, type PipelineSpec } from "../apply.ts";
@@ -46,6 +47,12 @@ test("expandEnv fills variables and defaults, and fails on unset ones", () => {
   assert.throws(() => expandEnv("${NOPE}", {}), /NOPE is not set/);
 });
 
+test("expandEnv nests defaults, and HOME falls back to the OS home folder", () => {
+  assert.equal(expandEnv("${D:-${HOME}/x.csv}", { HOME: "/home/u" }), "/home/u/x.csv");
+  assert.equal(expandEnv("${D:-${HOME}/x.csv}", { D: "/data/y.csv", HOME: "/home/u" }), "/data/y.csv");
+  assert.equal(expandEnv("${HOME}", {}), homedir());
+});
+
 test("resolveSpec orders upstream first and defaults run to the sinks", () => {
   const s = resolveSpec({ ...SPEC, nodes: [...SPEC.nodes].reverse() });
   assert.deepEqual(s.nodes.map((n) => n.key), ["reader", "part", "learn", "pred"]);
@@ -68,7 +75,7 @@ test("resolveSpec reports every problem at once", () => {
   })();
   assert.ok(err instanceof CliError);
   const problems = err.details as string[];
-  for (const re of [/prefix/, /unknown alias "nope"/, /no colons/, /no output port 9/, /unknown node "z"/, /c:1 already has an input/, /cycle/]) {
+  for (const re of [/prefix/, /unknown alias "nope"/, /no colons/, /unknown node "z"/, /c:1 already has an input/, /cycle/]) {
     assert.ok(problems.some((p) => re.test(p)), `expected a problem matching ${re}: ${problems.join(" | ")}`);
   }
 });
@@ -79,7 +86,25 @@ test("the example spec resolves", () => {
   assert.deepEqual(s.nodes.map((n) => n.key), ["reader", "missing", "partition", "learn", "predict", "score", "rf-learn", "rf-predict", "rf-score"]);
   assert.equal(s.nodes[0]!.settings!["source.path.path"], "/data/housing.csv");
   assert.deepEqual(s.run, ["score", "rf-score"]);
+  const byDefault = resolveSpec(raw, { HOME: "/home/u" });
+  assert.equal(byDefault.nodes[0]!.settings!["source.path.path"], "/home/u/knime-workspace/knime-cli-demo/california-housing/housing.csv");
   assert.equal(s.nodes.find((n) => n.key === "rf-learn")!.settings!.nrModels, 100);
+});
+
+test("apply reports whether the project was dirty before it changed anything", async () => {
+  const seen: (boolean | undefined)[] = [];
+  const k = fake();
+  await apply(k.session(), resolveSpec(SPEC), { noRun: true, onStart: (snap) => seen.push(snap.dirty) });
+  await apply(k.session(), resolveSpec(SPEC), { noRun: true, onStart: (snap) => seen.push(snap.dirty) });
+  assert.deepEqual(seen, [false, true]);
+});
+
+test("a wrong port fails at connect time, naming the ports KNIME really has", async () => {
+  const k = fake();
+  const spec = structuredClone(SPEC);
+  spec.connections![1] = { from: "part:9", to: "learn:1" };
+  await assert.rejects(apply(k.session(), resolveSpec(spec), { noRun: true }),
+    (e: CliError) => e.code === "CONNECTION_FAILED" && /has no output port 9\. root:2 outputs: 0 \(Flow Variable\), 1 \(Table\), 2 \(Table\)/.test(e.message));
 });
 
 test("planner adds everything into an empty workflow, right of existing nodes", async () => {
@@ -169,6 +194,17 @@ test("apply refuses to patch a node whose settings never appear", async () => {
   const k = fake();
   k.defaults[F("linreg-learn")] = { inPorts: 2, outPorts: 3, model: {} };
   await assert.rejects(apply(k.session(), resolveSpec(SPEC)), (e: CliError) => e.code === "EMPTY_MODEL");
+});
+
+test("apply creates typed settings on a node that shows none, as Math Formula does before its dialog has saved", async () => {
+  const k = fake();
+  k.defaults[F("linreg-learn")] = { inPorts: 2, outPorts: 3, model: {} };
+  const spec = structuredClone(SPEC);
+  spec.nodes[2]!.settings = { target: { $type: "string", value: "y" }, append: { $type: "boolean", value: true } };
+  const r = await apply(k.session(), resolveSpec(spec));
+  assert.ok(r.patched.find((p) => p.key === "learn")?.changed);
+  const learner = [...k.nodes.values()].find((n) => n.factory === F("linreg-learn"))!;
+  assert.deepEqual(learner.model, { target: "y", append: true });
 });
 
 test("a 504 on add_node is recovered by finding and labelling the new node", async () => {

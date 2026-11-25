@@ -30,8 +30,9 @@ export const nodesSearch: Command = {
 export const nodesInfo: Command = {
   path: ["nodes", "info"],
   tier: "LOCAL",
-  summary: "Ports, known settings keys and gotchas of a catalogue node",
+  summary: "Known settings keys, presets, gotchas and image output of a catalogue node",
   args: "<alias|factory>",
+  notes: ["Ports aren't listed here: `knime node ports <node>` reads them, with their columns, from KNIME."],
   examples: ["knime nodes info rf-learn", "knime nodes info partition --json"],
   async run(ctx) {
     const q = arg(ctx, 0, "alias");
@@ -40,7 +41,6 @@ export const nodesInfo: Command = {
       const near = search(q.replace(/[-_]/g, " ")).slice(0, 5).map((x) => x.alias);
       throw new CliError({ code: "ALIAS_NOT_FOUND", exit: EXIT.NOT_FOUND, message: `No catalogue entry "${q}"`, hint: near.length ? `Did you mean: ${near.join(", ")}?` : "See `knime nodes search`." });
     }
-    const port = (p: { index: number; name: string; type: string }) => `  ${p.index}: ${p.name} (${p.type})`;
     const presets = presetsFor(e.alias).map((p) => ({
       name: p.name, desc: p.desc, params: p.params, example: p.example, settings: p.build(p.example),
     }));
@@ -50,9 +50,13 @@ export const nodesInfo: Command = {
         `${e.name} — ${e.alias}${e.verified ? "" : " (unverified)"}`,
         `factory: ${e.factory}`,
         ...(e.deprecated ? [`deprecated: ${e.deprecated}`] : []),
-        "inputs (0 is the flow-variable port):", ...(e.in.length ? e.in.map(port) : ["  none"]),
-        "outputs:", ...(e.out.length ? e.out.map(port) : ["  none"]),
+        "ports: from KNIME, once the node is placed: `knime node ports <node>` (0 is the flow-variable port)",
         "settings keys:", ...(Object.keys(e.keys).length ? Object.entries(e.keys).map(([k, v]) => `  ${k}: ${v}`) : ["  (none recorded; read them with `knime node settings`)"]),
+        ...(e.image ? [
+          "image output: this node can put its chart on an image output port. In one command:",
+          `  knime node image <node> --enable [-o chart.png | -o chart.svg] [--width W --height H]`,
+          "  sets generateImage (and format and size), adds the Output Image port if missing, runs the node and writes the file.",
+        ] : []),
         ...(e.gotchas.length ? ["gotchas:", ...e.gotchas.map((g) => `  - ${g}`)] : []),
         ...presets.flatMap((p) => [
           `preset "${p.name}": ${p.desc}`,

@@ -2,14 +2,18 @@
  * `knime apply`: a declarative pipeline, idempotent by label, built progressively (add → connect → run upstream →
  * patch → run). The planner is pure; the executor carries a plan out against a Session.
  */
+import { homedir } from "node:os";
+
 import { byAlias, byFactory, isFactoryName, type CatalogueEntry } from "./catalogue.ts";
+import { findSelectors, selectColumns, selectorProblems, substitute, type ColumnSelector } from "./columns.ts";
 import { CliError, EXIT, usage } from "./errors.ts";
 import { runNodes, type RunReport } from "./execute.ts";
-import { formatChanges, planObject, type Change } from "./patch.ts";
-import { isObject } from "./paths.ts";
+import { formatChanges, isTyped, planObject, type Change } from "./patch.ts";
+import { isObject, leavesOfSpec } from "./paths.ts";
+import { connectExplained, tableColumns } from "./ports.ts";
 import { buildPreset, overlay, type PresetRef } from "./presets.ts";
 import type { NodeView, Session, Snapshot } from "./session.ts";
-import type { Json, JsonObject, SetResult, Settings } from "./types.ts";
+import type { ColumnSpec, Json, JsonObject, SetResult, Settings } from "./types.ts";
 
 export interface SpecNode {
   key: string;
@@ -46,6 +50,8 @@ export interface ResolvedNode extends SpecNode {
   entry?: CatalogueEntry;
   inputs: { from: Endpoint; toPort: number }[];
   depth: number;
+  /** Outputs that `$columns` selectors in the settings read their columns from; run before the node is patched. */
+  columnSources: Endpoint[];
 }
 
 export interface ResolvedSpec {
@@ -65,15 +71,26 @@ export function parseEndpoint(text: string): Endpoint {
   return { key: m[1]!, port: m[2] === undefined ? 1 : Number(m[2]) };
 }
 
-/** Expands `${VAR}` and `${VAR:-default}` in every string of a settings object. */
+/**
+ * Expands `${VAR}` and `${VAR:-default}` in every string of a settings object. Defaults may nest, so a spec can
+ * default to a path under the home folder: `${DATA:-${HOME}/data.csv}`. HOME falls back to the OS's home folder.
+ */
 export function expandEnv(value: Json, env: Record<string, string | undefined> = process.env): Json {
   if (typeof value === "string") {
-    return value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g, (_, name: string, def?: string) => {
-      const v = env[name];
-      if (v !== undefined && v !== "") return v;
-      if (def !== undefined) return def;
-      throw usage(`Environment variable ${name} is not set (used in the spec); set it or write \${${name}:-default}`);
-    });
+    const vars: Record<string, string | undefined> = { ...env, HOME: env.HOME || homedir() };
+    // Innermost references first: those whose default holds no further `${`.
+    const ref = /\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-((?:(?!\$\{)[^}])*))?\}/g;
+    let out = value;
+    for (let prev = ""; prev !== out;) {
+      prev = out;
+      out = out.replace(ref, (_, name: string, def?: string) => {
+        const v = vars[name];
+        if (v !== undefined && v !== "") return v;
+        if (def !== undefined) return def;
+        throw usage(`Environment variable ${name} is not set (used in the spec); set it or write \${${name}:-default}`);
+      });
+    }
+    return out;
   }
   if (Array.isArray(value)) return value.map((v) => expandEnv(v, env));
   if (isObject(value)) return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, expandEnv(v, env)]));
@@ -121,7 +138,7 @@ export function resolveSpec(raw: unknown, env?: Record<string, string | undefine
     } catch (e) {
       problems.push(`${where} (${n.key}): ${(e as Error).message}`);
     }
-    nodes.set(n.key, { ...n, settings, factory: factory ?? "", entry, label: `${spec.prefix}${n.key}`, inputs: [], depth: 0 });
+    nodes.set(n.key, { ...n, settings, factory: factory ?? "", entry, label: `${spec.prefix}${n.key}`, inputs: [], depth: 0, columnSources: [] });
   }
   const connections: { from: Endpoint; to: Endpoint }[] = [];
   const fed = new Set<string>();
@@ -142,18 +159,28 @@ export function resolveSpec(raw: unknown, env?: Record<string, string | undefine
     const slot = `${to.key}:${to.port}`;
     if (fed.has(slot)) problems.push(`connections[${i}]: ${slot} already has an input`);
     fed.add(slot);
-    const checks = [
-      { end: from, entry: src.entry, ports: src.entry?.out, side: "output" },
-      { end: to, entry: dst.entry, ports: dst.entry?.in, side: "input" },
-    ];
-    for (const { end, entry, ports, side } of checks) {
-      if (entry && ports && end.port > 0 && !ports.some((p) => p.index === end.port)) {
-        problems.push(`connections[${i}]: ${entry.alias} has no ${side} port ${end.port} `
-          + `(ports: ${ports.map((p) => `${p.index} ${p.name}`).join(", ") || "none"}; 0 is the flow-variable port)`);
-      }
-    }
     dst.inputs.push({ from, toPort: to.port });
     connections.push({ from, to });
+  }
+  for (const n of nodes.values()) {
+    for (const sel of findSelectors(n.settings)) {
+      const bad = selectorProblems(sel);
+      if (bad.length) {
+        problems.push(...bad.map((b) => `${n.key}: ${b}`));
+        continue;
+      }
+      let from: Endpoint | undefined;
+      try {
+        from = selectorSource(sel, n);
+      } catch (e) {
+        problems.push(`${n.key}: ${(e as Error).message}`);
+        continue;
+      }
+      if (!from) problems.push(`${n.key}: "$columns" without "from" needs a connection into ${n.key}:1`);
+      else if (!nodes.has(from.key)) problems.push(`${n.key}: "$columns".from names unknown node "${from.key}"`);
+      else if (from.key === n.key) problems.push(`${n.key}: "$columns".from can't be the node itself`);
+      else if (!n.columnSources.some((e) => e.key === from.key && e.port === from.port)) n.columnSources.push(from);
+    }
   }
   const ordered = topoSort([...nodes.values()], problems);
   const sinks = ordered.filter((n) => !connections.some((c) => c.from.key === n.key)).map((n) => n.key);
@@ -168,6 +195,12 @@ export function resolveSpec(raw: unknown, env?: Record<string, string | undefine
     });
   }
   return { prefix: spec.prefix, nodes: ordered, connections, run };
+}
+
+/** Where a selector reads its columns: its `from`, else the output feeding the node's input 1. */
+export function selectorSource(sel: ColumnSelector, node: Pick<ResolvedNode, "inputs">): Endpoint | undefined {
+  if (sel.from !== undefined) return parseEndpoint(sel.from);
+  return (node.inputs.find((i) => i.toPort === 1) ?? node.inputs[0])?.from;
 }
 
 function topoSort(nodes: ResolvedNode[], problems: string[]): ResolvedNode[] {
@@ -330,12 +363,15 @@ export interface ApplyOptions {
   noRun?: boolean;
   timeoutMs?: number;
   log?: (line: string) => void;
+  /** Called with the first read of the workflow, before anything changes. */
+  onStart?: (snap: Snapshot) => void;
 }
 
 export async function apply(session: Session, spec: ResolvedSpec, opts: ApplyOptions = {}): Promise<ApplyResult> {
   const log = opts.log ?? (() => {});
   const snap = await session.snapshot();
   const plan = planApply(spec, snap, opts);
+  opts.onStart?.(snap);
   const result: ApplyResult = { plan, ids: {}, patched: [], warnings: [] };
 
   if (plan.remove.length) {
@@ -361,16 +397,15 @@ export async function apply(session: Session, spec: ResolvedSpec, opts: ApplyOpt
       log(`added ${planned.label} as ${ids[node.key]}`);
     }
     for (const c of plan.connections.filter((x) => x.to.key === node.key && x.action === "connect")) {
-      await session.command({
-        kind: "connect", sourceNodeId: ids[c.from.key], sourcePortIdx: c.from.port,
-        destinationNodeId: ids[c.to.key], destinationPortIdx: c.to.port,
-      }, `connect ${c.from.key}:${c.from.port} → ${c.to.key}:${c.to.port}`);
+      await connectExplained(session, { node: ids[c.from.key]!, port: c.from.port }, { node: ids[c.to.key]!, port: c.to.port },
+        `connect ${c.from.key}:${c.from.port} → ${c.to.key}:${c.to.port}`);
     }
     if (!node.settings || Object.keys(node.settings).length === 0) continue;
 
     // Settings of most nodes only exist once their input has a spec, so run the direct inputs first.
-    const ups = [...new Set(node.inputs.map((i) => ids[i.from.key]!))].filter((id) => !executed.has(id));
-    if (ups.length && node.entry?.needsInputSpec !== false) {
+    const inputs = node.entry?.needsInputSpec !== false ? node.inputs.map((i) => ids[i.from.key]!) : [];
+    const ups = [...new Set([...inputs, ...node.columnSources.map((e) => ids[e.key]!)])].filter((id) => !executed.has(id));
+    if (ups.length) {
       log(`running inputs of ${node.label} so its settings exist`);
       const r = await runNodes(session, ups, { timeoutMs: opts.timeoutMs });
       if (!r.ok) {
@@ -383,8 +418,11 @@ export async function apply(session: Session, spec: ResolvedSpec, opts: ApplyOpt
       }
       ups.forEach((id) => executed.add(id));
     }
+    const settings = node.columnSources.length ? await resolveColumns(session, node, ids, result.warnings) : node.settings;
     const current = await session.api<Settings>("/api/node/settings", { nodeId: ids[node.key] }, `settings of ${node.label}`);
-    if (Object.keys(current.model).length === 0) {
+    // Some older nodes (Math Formula) report no settings until their dialog has saved once; a spec whose every value is
+    // typed names each key exactly, so it can still be created, as `knime node set` does.
+    if (Object.keys(current.model).length === 0 && !allTyped(settings)) {
       throw new CliError({
         code: "EMPTY_MODEL", exit: EXIT.REJECTED,
         message: `${node.label} (${ids[node.key]}) shows no settings, so its spec settings can't be applied`,
@@ -397,7 +435,7 @@ export async function apply(session: Session, spec: ResolvedSpec, opts: ApplyOpt
     let problem = current.problem;
     let pp;
     try {
-      pp = planObject(current.model, node.settings);
+      pp = planObject(current.model, settings);
     } catch (e) {
       throw new CliError({ code: "AMBIGUOUS", exit: EXIT.USAGE, message: `${node.label}: ${(e as Error).message}` });
     }
@@ -425,6 +463,36 @@ export async function apply(session: Session, spec: ResolvedSpec, opts: ApplyOpt
     result.run = await runNodes(session, plan.run.map((k) => ids[k]!), { timeoutMs: opts.timeoutMs });
   }
   return result;
+}
+
+/** True if every leaf of a spec's settings is a typed value ({"$type", "value"}), so each names the exact key to create. */
+function allTyped(settings: JsonObject): boolean {
+  const leaves = leavesOfSpec(settings);
+  return leaves.length > 0 && leaves.every((l) => isTyped(l.value));
+}
+
+/** The node's settings with every `$columns` selector replaced by the column names it picks right now. */
+async function resolveColumns(session: Session, node: ResolvedNode, ids: Record<string, string>, warnings: string[]): Promise<JsonObject> {
+  const columns = new Map<string, ColumnSpec[]>();
+  for (const src of node.columnSources) {
+    const id = ids[src.key]!;
+    const ports = await session.ports(id);
+    const got = tableColumns(ports.outputs.find((p) => p.index === src.port));
+    if (!got.columns) {
+      throw new CliError({
+        code: "NO_COLUMNS", exit: EXIT.REJECTED,
+        message: `${node.label}: "$columns" can't read ${src.key}:${src.port} (${id}): ${got.reason}`,
+        hint: `Check the port with \`knime node ports ${id}\`; "from" names an output port of a spec node (1 is the first data port).`,
+      });
+    }
+    columns.set(`${src.key}:${src.port}`, got.columns);
+  }
+  return substitute(node.settings!, (sel) => {
+    const src = selectorSource(sel, node)!;
+    const r = selectColumns(sel, columns.get(`${src.key}:${src.port}`) ?? []);
+    warnings.push(...r.warnings.map((w) => `${node.label}: ${w}`));
+    return r.names;
+  }) as JsonObject;
 }
 
 /**

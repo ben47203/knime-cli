@@ -5,7 +5,7 @@
       "key": "reader",
       "alias": "csv-reader",
       "settings": {
-        "source.path.path": "${HOUSING_CSV:-/Users/benbryant/knime-workspace/knime-cli-demo/california-housing/housing.csv}"
+        "source.path.path": "${HOUSING_CSV:-${HOME}/knime-workspace/knime-cli-demo/california-housing/housing.csv}"
       }
     },
     {

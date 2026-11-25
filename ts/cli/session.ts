@@ -6,7 +6,7 @@ import { KnimeClient } from "../src/client.ts";
 import { listInstances, type Instance } from "../src/discovery.ts";
 import { CliError, EXIT, translate } from "./errors.ts";
 import type {
-  Connection, NodeState, Projects, Transport, WorkflowNode, WorkflowRead, WorkflowState,
+  BinaryResponse, Connection, NodePorts, NodeState, Projects, Transport, WorkflowNode, WorkflowRead, WorkflowState,
 } from "./types.ts";
 
 /** The plugin API version the CLI was written against. */
@@ -58,10 +58,13 @@ export class Snapshot {
   readonly connections: Connection[];
   readonly raw: WorkflowRead;
   readonly workflowId: string;
+  /** The project has unsaved changes (from workflow/state); undefined if the server didn't say. */
+  readonly dirty?: boolean;
 
   constructor(read: WorkflowRead, state: WorkflowState | undefined, workflowId: string) {
     this.raw = read;
     this.workflowId = workflowId;
+    this.dirty = state?.dirty;
     const states = new Map((state?.nodes ?? []).map((n) => [n.nodeId, n]));
     const templates = read.workflow.nodeTemplates ?? {};
     this.nodes = Object.values(read.workflow.nodes ?? {}).map((n) => {
@@ -235,6 +238,59 @@ export class Session {
     } catch (e) {
       throw translate(e, context);
     }
+  }
+
+  /** A node's ports with their specs (column names and types), or why a spec is missing. */
+  ports(nodeId: string): Promise<NodePorts> {
+    return this.api<NodePorts>("/api/node/ports", { nodeId }, `ports of ${nodeId}`);
+  }
+
+  /** A binary `/api/*` route (images), with the target merged in. */
+  async bytes(path: string, body: Record<string, unknown> = {}, context?: string): Promise<BinaryResponse> {
+    const scoped = { ...(await this.target()), ...body };
+    try {
+      return await this.transport.apiBytes(path, scoped);
+    } catch (e) {
+      throw translate(e, context);
+    }
+  }
+
+  /**
+   * Fails clearly when the plugin reports a capability as missing (a KNIME internal it reaches by reflection wasn't
+   * found). Older plugins report no capabilities; then the request itself decides.
+   */
+  async requireCapability(name: string, what: string): Promise<void> {
+    let st;
+    try {
+      st = await this.transport.status();
+    } catch (e) {
+      throw translate(e, "status");
+    }
+    if (st.capabilities?.[name] === false) {
+      throw new CliError({
+        code: "CAPABILITY_MISSING", exit: EXIT.UNAVAILABLE,
+        message: `This KNIME can't produce ${what}: capability ${name} is unavailable${st.capabilityProblems?.[name] ? ` (${st.capabilityProblems[name]})` : ""}`,
+        hint: "The plugin couldn't reach a KNIME internal it needs in this KNIME version; `knime status --json` lists capabilities. Other commands still work.",
+      });
+    }
+  }
+
+  /** A project-level route (`/api/project/*`): only the projectId is merged in, as they refuse other fields. */
+  async projectApi<T>(path: string, body: Record<string, unknown> = {}, context?: string): Promise<T> {
+    const { projectId } = await this.target();
+    try {
+      return await this.transport.api<T>(path, { projectId, ...body });
+    } catch (e) {
+      throw translate(e, context);
+    }
+  }
+
+  /** The target project's name and whether it has unsaved changes (null if KNIME doesn't know). */
+  async unsaved(): Promise<{ name: string; dirty: boolean | null }> {
+    const { projectId } = await this.target();
+    const { projects } = await this.api<Projects>("/api/projects");
+    const p = projects.find((x) => x.projectId === projectId);
+    return { name: p?.name ?? projectId, dirty: p?.dirty ?? null };
   }
 
   /** One gateway workflow command. */

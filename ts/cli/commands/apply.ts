@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 import { apply as applySpec, formatPlan, planApply, resolveSpec } from "../apply.ts";
-import { arg, seconds, str, type Command } from "../cli.ts";
+import { arg, seconds, str, warnIfDirtyBeforeReset, type Command } from "../cli.ts";
 import { EXIT, usage } from "../errors.ts";
 import { formatReport } from "../execute.ts";
 
@@ -18,9 +18,10 @@ export const apply: Command = {
     timeout: { type: "string", arg: "<seconds>", desc: "Per execution step (default 600)" },
   },
   notes: [
-    "Only nodes labelled <prefix>… are reused or removed; nothing else is touched, and the project isn't saved.",
+    "Only nodes labelled <prefix>… are reused or removed; nothing else is touched. The project isn't saved: `knime save`.",
     "Settings changes reset downstream nodes and can't be undone. Safe to re-run after a failure or a 504.",
     "Spec format and behaviour: `knime guide apply`. Example: cli/examples/housing-small.json.",
+    "Settings may pick columns from upstream specs: {\"$columns\": {\"from\": \"missing:1\", \"type\": \"number\", \"exclude\": [\"y\"]}}.",
   ],
   examples: ["knime apply cli/examples/housing-small.json --dry-run", "HOUSING_CSV=/data/housing.csv knime apply cli/examples/housing-small.json --json"],
   async run(ctx) {
@@ -41,6 +42,7 @@ export const apply: Command = {
     }
     const r = await applySpec(s, spec, {
       rebuild: Boolean(ctx.values.rebuild), noRun: Boolean(ctx.values["no-run"]), timeoutMs: seconds(ctx, "timeout", 600), log: ctx.log,
+      onStart: (snap) => warnIfDirtyBeforeReset(ctx, snap.dirty),
     });
     for (const w of r.warnings) ctx.warn(w);
     const ok = !r.run || r.run.ok;
