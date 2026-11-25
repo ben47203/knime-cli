@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+
+jobs:
+  cli:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ts/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run test:cli
+      - run: npm run build
+      - name: Packaged CLI starts
+        run: |
+          npm pack
+          mkdir -p /tmp/pkg && tar -xzf knime-cli-*.tgz -C /tmp/pkg
+          node /tmp/pkg/package/dist/cli/main.js --help
+          node /tmp/pkg/package/dist/cli/main.js guide start > /dev/null
