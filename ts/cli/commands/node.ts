@@ -1,10 +1,11 @@
 import { readFile } from "node:fs/promises";
 
 import { byAlias, byFactory, isFactoryName, search } from "../catalogue.ts";
-import { arg, str, type Command, type Ctx } from "../cli.ts";
+import { arg, str, warnIfDirtyBeforeReset, type Command, type Ctx } from "../cli.ts";
 import { CliError, EXIT, usage } from "../errors.ts";
 import { coerce, formatChanges, parseAssignment, planAssignments, planObject, PatchError, type PatchPlan } from "../patch.ts";
 import { flatten, isObject } from "../paths.ts";
+import { connectExplained, portLines } from "../ports.ts";
 import type { NodeView, Session } from "../session.ts";
 import { buildPreset } from "../presets.ts";
 import type { Json, JsonObject, SetResult, Settings } from "../types.ts";
@@ -56,7 +57,7 @@ export const nodeAdd: Command = {
     const id = r.newNodeId;
     if (label) await s.command({ kind: "update_node_label", nodeId: id, label }, `label ${id}`);
     if (from) {
-      await s.command({ kind: "connect", sourceNodeId: from.node.id, sourcePortIdx: from.port, destinationNodeId: id, destinationPortIdx: 1 }, `connect ${from.node.id}:${from.port} → ${id}:1`);
+      await connectExplained(s, { node: from.node.id, port: from.port }, { node: id, port: 1 }, `connect ${from.node.id}:${from.port} → ${id}:1`);
     }
     if (!label) ctx.warn("no --label: label your nodes so later runs can find them (ids are reused after deletes)");
     return { data: { id, label, factory, alias, position, connectedFrom: from && `${from.node.id}:${from.port}` }, text: [`added ${id}${label ? ` [${label}]` : ""} (${alias ?? factory})`] };
@@ -70,7 +71,7 @@ export const nodeConnect: Command = {
   args: "<from[:port]> <to[:port]>",
   notes: [
     "A connection into an occupied input replaces the old one. \"Connection could not be created\" usually means a",
-    "wrong port: check with `knime workflow show --ports` or `knime nodes info <alias>`.",
+    "wrong port: check both nodes with `knime node ports <node>`.",
   ],
   examples: ["knime node connect my:partition:1 my:learner", "knime node connect root:3:2 root:5:2"],
   async run(ctx) {
@@ -80,7 +81,7 @@ export const nodeConnect: Command = {
     const to = snap.resolvePort(arg(ctx, 1, "destination node"));
     if (from.port >= from.node.outPorts && from.node.outPorts) ctx.warn(`${describe(from.node)} has output ports 0..${from.node.outPorts - 1}`);
     if (to.port >= to.node.inPorts && to.node.inPorts) ctx.warn(`${describe(to.node)} has input ports 0..${to.node.inPorts - 1}`);
-    await s.command({ kind: "connect", sourceNodeId: from.node.id, sourcePortIdx: from.port, destinationNodeId: to.node.id, destinationPortIdx: to.port },
+    await connectExplained(s, { node: from.node.id, port: from.port }, { node: to.node.id, port: to.port },
       `connect ${from.node.id}:${from.port} → ${to.node.id}:${to.port}`);
     return { data: { from: `${from.node.id}:${from.port}`, to: `${to.node.id}:${to.port}` }, text: [`connected ${describe(from.node)}:${from.port} → ${describe(to.node)}:${to.port}`] };
   },
@@ -150,6 +151,35 @@ export const nodeRm: Command = {
     }
     await s.command({ kind: "delete", nodeIds, annotationIds: [], connectionIds: [] }, `delete ${nodeIds.length} node(s)`);
     return { data: { deleted: list }, text: [`deleted ${unique.length} node(s):`, ...unique.map((n) => `  ${describe(n)}`)] };
+  },
+};
+
+export const nodePorts: Command = {
+  path: ["node", "ports"],
+  tier: "READ",
+  summary: "A node's input and output ports with their column names and types, or why a spec is missing",
+  args: "<node>",
+  options: { "no-columns": { type: "boolean", desc: "Only the ports, not their columns" } },
+  notes: [
+    "Port 0 is the flow-variable port (metanodes have none); data ports start at 1. An input's spec is its",
+    "upstream output's. Specs exist once a node is configured, and for some (CSV Reader) only once it has run;",
+    "`reason` says which. Image ports (chart nodes) show as Image; fetch them with `knime node image`.",
+  ],
+  examples: ["knime node ports my:reader", "knime node ports root:4 --json"],
+  async run(ctx) {
+    const s = await ctx.session();
+    const snap = await s.snapshot();
+    const n = snap.resolve(arg(ctx, 0, "node"));
+    const p = await s.ports(n.id);
+    const columns = !ctx.values["no-columns"];
+    return {
+      data: { node: { id: n.id, label: n.label, name: n.name, state: n.state }, ...p },
+      text: [
+        `${describe(n)} (${n.state ?? "?"})`,
+        "inputs:", ...(p.inputs.length ? p.inputs.flatMap((x) => portLines(x, snap, columns)) : ["  none"]),
+        "outputs:", ...(p.outputs.length ? p.outputs.flatMap((x) => portLines(x, snap, columns)) : ["  none"]),
+      ],
+    };
   },
 };
 
@@ -279,10 +309,12 @@ export const nodeSet: Command = {
         text: [...diff, changing.length ? `(dry run: nothing sent)` : "nothing to change"],
       };
     }
+    warnIfDirtyBeforeReset(ctx, snap.dirty);
     const r = await s.api<SetResult>("/api/node/settings/set", { nodeId: n.id, model: plan.patch }, `set ${n.id}`);
     if (r.changed) ctx.warn(resetNote);
     if (r.message?.type === "ERROR") ctx.warn(`${n.id} after set: ${r.message.text}`);
-    if (r.complete === false) ctx.warn(`${n.id}'s settings are still incomplete after the set: ${r.problem ?? "the node's own save failed"}`);    return {
+    if (r.complete === false) ctx.warn(`${n.id}'s settings are still incomplete after the set: ${r.problem ?? "the node's own save failed"}`);
+    return {
       data: { node: n.id, changed: r.changed, state: r.state, message: r.message, changes: plan.changes, resets: r.changed ? [n.id, ...downstream] : [] },
       text: [...diff, `${r.changed ? "changed" : "unchanged"}; ${n.id} is now ${r.state}${r.message ? ` (${r.message.type}: ${r.message.text})` : ""}`],
     };

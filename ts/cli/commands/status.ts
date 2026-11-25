@@ -2,12 +2,13 @@ import { listInstances } from "../../src/discovery.ts";
 import { seconds, type Command } from "../cli.ts";
 import { CliError, EXIT, translate } from "../errors.ts";
 import { EXPECTED_API_VERSION } from "../session.ts";
+import { projectState, saveLine } from "./project.ts";
 import type { Status } from "../types.ts";
 
 export const status: Command = {
   path: ["status"],
   tier: "READ",
-  summary: "Which KNIME instance the CLI talks to, whether it's ready, and its API version",
+  summary: "Which KNIME instance the CLI talks to, whether it's ready, its API version, and unsaved changes",
   options: {
     wait: { type: "string", arg: "<seconds>", desc: "Poll until KNIME's UI is ready, up to this long" },
   },
@@ -36,6 +37,7 @@ export const status: Command = {
       pid: st.pid, url: s.instance?.url, ready: st.ready, apiVersion: st.apiVersion, expectedApiVersion: EXPECTED_API_VERSION,
       knimeVersion: st.knimeVersion, startedAt: s.instance?.startedAt, otherInstances: others,
       capabilities: st.capabilities, capabilityProblems: st.capabilityProblems,
+      project: st.ready ? await projectState(s) : undefined,
     };
     for (const [name, why] of Object.entries(st.capabilityProblems ?? {})) ctx.warn(`capability ${name} is unavailable: ${why}`);
     if (!st.ready) {
@@ -50,6 +52,7 @@ export const status: Command = {
         `KNIME ${st.knimeVersion}, pid ${st.pid}, ${st.ready ? "ready" : "NOT ready"}`,
         `API v${st.apiVersion} at ${s.instance?.url ?? "?"} (started ${s.instance?.startedAt ?? "?"})`,
         ...(others.length ? [`other live instances: ${others.join(", ")} (pick with --pid)`] : []),
+        ...(data.project ? [`project ${saveLine(data.project)}`] : []),
       ],
     };
   },

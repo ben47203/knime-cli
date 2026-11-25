@@ -8,11 +8,18 @@ This file is the source of `knime guide`. Each `## … {#topic}` section is one 
 A safe first session, read-only until the last steps:
 1. `knime status` — is KNIME running and ready? Which instance (pid) and API version?
 2. `knime workflow show` — the open project, its nodes (id, label, name, state, message) and connections.
-3. `knime node settings <node>` — a node's settings as dot-paths. `<node>` is an id (`root:7`, or just `7`) or a label.
-4. `knime nodes search <text>` / `knime nodes info <alias>` — the built-in catalogue of known-good nodes, their ports and settings keys.
+3. `knime node settings <node>` — a node's settings as dot-paths. `<node>` is an id (`root:7`, or just `7`) or a label. `knime node ports <node>` shows its ports and the columns on them.
+4. `knime nodes search <text>` / `knime nodes info <alias>` — the built-in catalogue of known-good nodes, their settings keys, presets and gotchas (ports come from KNIME: `knime node ports`).
 5. `knime apply pipeline.json --dry-run` — what a declarative pipeline would add, connect and remove. Drop `--dry-run` to build and run it.
 
-Every command takes `--json` (machine-readable output, errors included) and shows its tier in `--help`: READ changes nothing, WRITE changes the workflow, EXEC runs nodes. The CLI never prompts and never saves the project.
+Every command takes `--json` (machine-readable output, errors included) and shows its tier in `--help`: READ changes nothing, WRITE changes the workflow, EXEC runs nodes. The CLI never prompts and never saves the project on its own; see [Saving](#saving).
+
+## Saving {#saving}
+- Changes made through the CLI live only in KNIME's memory until the project is saved. The CLI **never saves on its own**: run `knime save` when the work should be kept.
+- **After every WRITE or EXEC command** the CLI reads the project's unsaved-changes flag. If it's set, it warns `project "…" has unsaved changes; \`knime save\` saves them`; with `--json` the warning is in `warnings` and the envelope has `"dirty": true`. This happens even when the command failed part-way, since it may have changed things first.
+- **Before a command that resets nodes** (`node set` with a real change, `apply`), it also warns if the project *already* had unsaved changes: settings changes can't be undone, so the last save is the only way back. Save first if you want a restorable state.
+- `knime save` saves the project (`--project`, or the default one) to its own folder, exactly as KNIME's Save does, including the preview image. It reports the path, and does nothing if there's nothing unsaved. It's refused with **SAVE_BLOCKED** (exit 7) for component projects, temporary copies of Hub, Server or archive workflows, read-only projects, or a locked folder; there's no "save as".
+- `knime workflow show` (and `knime status`) report `dirty`, `canSave`, `saveBlocked` and `path` under `project`.
 
 ## Connecting {#connecting}
 - **Discovery:** each running KNIME with the plugin writes `~/.knime-cli/instances/<pid>.json` with `url`, `token`, `pid`, `apiVersion` and `startedAt`.
@@ -28,6 +35,7 @@ Every command takes `--json` (machine-readable output, errors included) and show
 - **Node ids** look like `root:7` or `root:5:0:3`.
   - **Ids are reused after a delete**, so never cache ids across runs. Identify your own nodes by **label** (`knime node label root:7 cal:rf-learn`), and scope any cleanup to your labels only. Never "delete everything".
 - **Ports:** port **0** is the hidden flow-variable port, so data ports start at **1**. Learners often output the model on a higher port. For example, the random forest learner's model is on port 3. A wrong port gives only "Connection could not be created".
+  - `knime node ports <node>` lists a placed node's ports from KNIME: names, types, what they're connected to, and each table's column names and types (with domains), or the reason a spec is missing ("not connected", "no spec until the node executes", "upstream not configured"). `knime workflow show --ports` gives a one-line summary per port for every node.
 - **Node states:** IDLE (not configurable yet), CONFIGURED, QUEUED, EXECUTING, EXECUTED, plus a warning or error message.
 - **Build progressively, in this order:** add → connect → **execute upstream** → read settings → patch settings → execute.
   - A node shows **empty settings** (`model: {}`) until its input has a table spec, and CSV Reader only provides a spec once it has run.
@@ -72,11 +80,23 @@ Every command takes `--json` (machine-readable output, errors included) and show
 Errors come back with a stable exit code, a cause and a next step; with `--json` they're printed to stdout as `{"ok": false, "error": {"code", "message", "cause", "hint"}}`. The table below is generated from the CLI's error translations.
 
 ## Data in and out {#data}
-- There's no table-preview endpoint yet. Port summaries are just "Rows: N, Cols: M", so results must be written to CSV with a CSV Writer and read from disk. Column names downstream can only be inferred.
+- There's no table-preview endpoint yet. Port summaries are just "Rows: N, Cols: M", so results must be written to CSV with a CSV Writer and read from disk. Column names and types are known, though: `knime node ports <node>`.
+- Charts come out as files: `knime node image <chart> --enable -o chart.png` (see the images topic).
 - Paths in settings are local filesystem paths on the KNIME host.
 
+## Pictures of the workflow and its charts {#images}
+- `knime workflow svg -o canvas.svg` saves the canvas as KNIME draws it for the saved workflow preview: nodes, names, states, ports, connections and annotations, cropped to the nodes. Without `-o` the SVG goes to stdout. `--workflow <id>` draws a metanode or component's inside.
+- `knime workflow svg --png -o canvas.png [--scale 2]` renders it to PNG. The SVG's text is HTML inside `foreignObject`, which only a browser renders faithfully, so this shells out to a headless Chrome, Chromium or Edge, a browser Playwright downloaded, or the `playwright` CLI (`KNIME_CLI_BROWSER` overrides). With none, it fails with NO_BROWSER; the SVG itself needs no browser.
+- **Charts as images, from any chart node, in one command:** `knime node image <chart> --enable -o chart.png`.
+  - KNIME's current chart nodes (Bar Chart, Line Plot, Scatter Plot, …) share a `generateImage` setting (with `imageFormat` PNG or SVG, `width`, `height`; default 800 × 600) and an extendable **Output Image** port group. The image port exists only when the group has a port, which the dialog's Apply adds but `node set` doesn't.
+  - `--enable` does all of it: it finds `generateImage` in the node's settings (so it works for any chart node that has it, not a fixed list), adds the Output Image port with the gateway's `add_port` command if there isn't one, sets `generateImage: true` plus `--format PNG|SVG`, `--width`, `--height` (`-o x.svg` alone also picks SVG), runs the node, and writes the image. Re-running it adds nothing twice.
+  - Without `--enable` it only reads: the first image output port (or `--port N`) of an executed node. The extension follows the content type, and the default file name is the node's label.
+  - The chart itself still needs its columns: e.g. Bar Chart `categoryColumnV3=city aggregationMethod=SUM frequencyColumnsV2.mode=MANUAL frequencyColumnsV2.manualFilter.manuallySelected='["sales"]'` (`knime nodes info bar-chart`).
+  - Errors: NO_IMAGE_PORT (exit 3: no image port; the hint says whether `--enable` would help), IMAGE_NOT_READY (exit 8: not executed yet), NO_IMAGE_SETTING (exit 7: not a chart node).
+- If the plugin can't reach KNIME's renderer in this KNIME version, `/status` says `capabilities.workflowSvg: false` and the command fails with CAPABILITY_MISSING (exit 4).
+
 ## Recipes that are known to work {#recipes}
-Settings keys verified in the dogfooding runs. `knime nodes info <alias>` has ports and keys for each.
+Settings keys verified in the dogfooding runs. `knime nodes info <alias>` has the keys for each; `knime node ports <node>` gives a placed node's ports.
 - **CSV Reader** (`csv-reader`): `…multiFileSelectionParams.source.path.path`. Empty fields count as missing; text `NA` does not, and there's no setting for a missing-value pattern.
 - **CSV Writer** (`csv-writer`): `path`, `if_path_exists`, `create_missing_folders`, `write_row_header`.
 - **Missing Value** (`missing-value`): set `dataTypeSettings.<DoubleCell|IntCell>.factoryID`.
@@ -90,6 +110,7 @@ Settings keys verified in the dogfooding runs. `knime nodes info <alias>` has po
 - **Numeric Scorer** (`numeric-scorer`): gives R², RMSE and MAE.
 - **GroupBy** (`groupby`): `grouByColumns.InclList`, plus parallel arrays in `aggregationColumn` (`columnNames`, typed `columnTypes`, `aggregationMethod`, typed `inclMissingVals`); see the `aggregate` preset.
 - **Column Renamer** (`column-renamer`): typed `renamings` entries; see the `rename` preset, and check `oldName` exactly.
+- **Bar Chart** (`bar-chart`): `categoryColumnV3`, `aggregationMethod`, `frequencyColumnsV2.manualFilter.manuallySelected`; get the chart as a PNG or SVG with `knime node image <node> --enable` (see `knime guide images`).
 
 ## Declarative pipelines {#apply}
 `knime apply pipeline.json` builds a pipeline from a spec, idempotently, keyed by label:
@@ -105,17 +126,27 @@ Settings keys verified in the dogfooding runs. `knime nodes info <alias>` has po
 }
 ```
 - Every node gets the label `<prefix><key>`. On a re-run, a node with that label and the same factory is reused; nodes with the prefix that the spec no longer has (or whose factory changed) are removed. Nothing without the prefix is touched.
-- Settings keys may be nested objects or dot-paths (suffixes allowed, as in `node set`), and values may be typed (`{"$type": …}`). String values expand `${VAR}` and `${VAR:-default}` from the environment.
+- Settings keys may be nested objects or dot-paths (suffixes allowed, as in `node set`), and values may be typed (`{"$type": …}`). String values expand `${VAR}` and `${VAR:-default}` from the environment; defaults may nest, and HOME is always set, so `${DATA:-${HOME}/data.csv}` defaults to a file in the home folder.
 - `"preset": {"name": "regression", "target": "y", "exclude": ["id"]}` (or just `"preset": "regression"`) starts from a catalogue preset, built from its parameters; `settings` then override single keys, keeping the preset's `$type` where it has one. `knime nodes info <alias>` lists a node's presets and parameters.
+- **Column selectors:** where a setting takes a list of column names, `{"$columns": {…}}` stands for the names picked from an upstream node's output **when apply reaches the node**, so the spec needn't spell out every column:
+  ```json
+  "column_filter": { "included_names": { "$columns": { "from": "missing:1", "type": "number", "exclude": ["median_house_value"] } } }
+  ```
+  - `from`: `key[:port]` of a spec node's output (port 1 by default). Leave it out to read whatever feeds this node's input 1. That node is run first, so its spec exists.
+  - `type`: a group (`number`, `integer`, `decimal`, `string`, `boolean`, `datetime`) or text in KNIME's type name (`Number (Float)`); a string or an array of them.
+  - `include` (only these, in this order), `exclude` (drop these), `pattern` (regular expression on the name). With none, every column.
+  - The result is a plain string array, so it replaces existing list keys; wrap it to create a key: `{"$type": "string[]", "value": {"$columns": …}}`. Names in `include`/`exclude` that aren't in the input, and selectors that pick nothing, are warnings (a typo would otherwise pass silently). A source port without a table spec fails with NO_COLUMNS.
+  - `knime node ports <node>` shows the columns a selector would choose from.
 - Order: nodes are visited upstream first; each node's direct inputs are executed before its settings are patched, so the settings exist. Then `run` (default: every node without outgoing connections in the spec) is executed and checked like `knime run`.
+- Port numbers in `connections` aren't checked offline: KNIME checks them when connecting, and a refusal names the ports both nodes really have.
 - `--dry-run` shows the structural plan (adds, reuses, removals, connections) without touching KNIME. `--rebuild` removes and re-adds every prefixed node.
 
 ## What this means for the CLI's design {#design}
 1. **A `guide` command** with short topics (model, settings, execution, errors, recipes), so a consumer with no context can bootstrap. Agents read `--help` and `guide` before acting.
-2. **Friendly addressing:** look nodes up by label as well as id, and factories by alias (`csv-reader`, `rf-learn`) from a built-in catalogue that records ports and known settings keys.
+2. **Friendly addressing:** look nodes up by label as well as id, and factories by alias (`csv-reader`, `rf-learn`) from a built-in catalogue that records known settings keys; ports come live from KNIME (`node ports`).
 3. **Dot-path settings:** `knime node set reader source.path.path=/x.csv`, with JSON and type hints, plus a `--dry-run` that shows the diff and warns that downstream nodes will be reset.
 4. **A declarative pipeline:** `knime apply pipeline.json` that is idempotent, keyed by label, and builds progressively (executing upstream before configuring downstream).
 5. **Honest execution:** `run` waits for completion, loops past the 30 s cap, and fails with a list of nodes that didn't run.
 6. **Error translation:** map known server errors to a cause and a next step (504/503, "unknown setting", "Connection could not be created", empty model, and so on).
 7. **Agent-friendly output:** `--json` on every command, stable exit codes, no prompts, and non-zero exits with machine-readable errors.
-8. **Safety:** commands show their tier (READ/WRITE/EXEC), destructive operations only touch labelled nodes by default, and the CLI never saves the project unless asked.
+8. **Safety:** commands show their tier (READ/WRITE/EXEC), destructive operations only touch labelled nodes by default, and the CLI never saves the project unless asked (`knime save`), but says when there are unsaved changes.

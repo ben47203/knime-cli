@@ -55,7 +55,7 @@ test("guide topics come from CONTEXT.md and errors include the generated table",
 test("catalogue search ranks aliases first, and every entry is well formed", () => {
   assert.equal(search("regression")[0]?.alias.includes("reg"), true);
   assert.equal(search("forest")[0]?.alias, "rf-learn");
-  for (const e of [byAlias("rf-learn")!, byAlias("reg-predict")!]) assert.ok(e.out.length && e.in.every((p) => p.index >= 1));
+  for (const e of [byAlias("rf-learn")!, byAlias("reg-predict")!]) assert.ok(e.factory.endsWith("Factory") || /Factory\d*$/.test(e.factory));
 });
 
 test("unknown commands and bad options are usage errors (exit 2), with JSON on stdout", async () => {
@@ -143,6 +143,7 @@ test("node connect parses node:port with labels that contain colons", async () =
   const bad = await knime(k, "node", "connect", "my:reader:5", "root:3", "--json");
   assert.equal(bad.json.error.code, "CONNECTION_FAILED");
   assert.match(bad.json.error.cause, /port 0 is the flow-variable port/);
+  assert.match(bad.json.error.message, /root:1 has no output port 5\. root:1 outputs: 0 \(Flow Variable\), 1 \(Table\); root:3 inputs: /);
 });
 
 test("run exits 8 listing nodes that stayed IDLE although the server said done", async () => {
@@ -160,6 +161,92 @@ test("run succeeds when everything in scope executed", async () => {
   const r = await knime(workflow(), "run", "my:part");
   assert.equal(r.code, 0);
   assert.match(r.stdout, /2 executed, 0 not executed/);
+});
+
+test("WRITE commands warn when they leave unsaved changes; READ commands don't check", async () => {
+  const k = workflow();
+  const read = await knime(k, "node", "settings", "my:reader", "--json");
+  assert.equal(read.json.dirty, undefined);
+  const r = await knime(k, "node", "label", "root:3", "my:third", "--json");
+  assert.equal(r.code, 0);
+  assert.equal(r.json.dirty, true);
+  assert.ok(r.json.warnings.some((w: string) => /project "Test" has unsaved changes; `knime save` saves them/.test(w)), r.json.warnings);
+  const human = await knime(k, "node", "label", "root:3", "my:3rd");
+  assert.match(human.stderr, /warning: project "Test" has unsaved changes/);
+});
+
+test("a failed WRITE command still reports unsaved changes", async () => {
+  const k = workflow();
+  k.dirty = true;
+  const r = await knime(k, "node", "set", "my:reader", "bogus=1", "--json");
+  assert.equal(r.code, EXIT.REJECTED);
+  assert.equal(r.json.dirty, true);
+  assert.ok(r.json.warnings.some((w: string) => /unsaved changes/.test(w)));
+});
+
+test("node set warns first when the project was already dirty, and only when it resets", async () => {
+  const k = workflow();
+  const clean = await knime(k, "node", "set", "my:reader", "seed=5", "--json");
+  assert.ok(!clean.json.warnings.some((w: string) => /already had unsaved changes/.test(w)));
+  const again = await knime(k, "node", "set", "my:reader", "seed=6", "--json");
+  assert.ok(again.json.warnings.some((w: string) => /already had unsaved changes .* `knime save`/.test(w)), again.json.warnings);
+  const same = await knime(k, "node", "set", "my:reader", "seed=6", "--json");
+  assert.ok(!same.json.warnings.some((w: string) => /already had/.test(w)), "a no-op patch resets nothing");
+});
+
+test("save saves a dirty project in place, and then nothing is unsaved", async () => {
+  const k = workflow();
+  k.dirty = true;
+  const r = await knime(k, "save", "--json");
+  assert.equal(r.code, 0);
+  assert.equal(r.json.data.saved, true);
+  assert.equal(r.json.data.path, "/ws/Test");
+  assert.equal(r.json.dirty, false);
+  assert.ok(!r.json.warnings.some((w: string) => /unsaved/.test(w)));
+  assert.equal(k.saves, 1);
+  const again = await knime(k, "save", "--json");
+  assert.equal(again.json.data.saved, false, "a clean project isn't saved again");
+  assert.equal(k.saves, 1);
+});
+
+test("save explains a project that can't be saved in place (exit 7)", async () => {
+  const k = workflow();
+  k.dirty = true;
+  k.saveBlocked = "it is a temporary copy of a Hub workflow";
+  const r = await knime(k, "save", "--json");
+  assert.equal(r.code, EXIT.REJECTED);
+  assert.equal(r.json.error.code, "SAVE_BLOCKED");
+  assert.match(r.json.error.message, /temporary copy of a Hub workflow/);
+  assert.match(r.json.error.cause, /component project/);
+});
+
+test("workflow show and status report unsaved changes and whether the project can be saved", async () => {
+  const k = workflow();
+  k.dirty = true;
+  const w = await knime(k, "workflow", "show", "--json");
+  assert.equal(w.json.data.project.dirty, true);
+  assert.equal(w.json.data.project.canSave, true);
+  assert.equal(w.json.data.project.path, "/ws/Test");
+  assert.match((await knime(k, "workflow", "show")).stdout, /project Test: unsaved changes \(`knime save`\)/);
+  const st = await knime(k, "status", "--json");
+  assert.equal(st.json.data.project.dirty, true);
+});
+
+test("node ports lists ports with columns, and why a spec is missing", async () => {
+  const k = workflow();
+  k.nodes.get("root:1")!.columns = [{ name: "city", type: "String", domain: { values: ["Perth", "Hobart"] } }, { name: "sales", type: "Number (Integer)", domain: { lower: 4, upper: 13 } }];
+  const before = await knime(k, "node", "ports", "my:part", "--json");
+  assert.equal(before.code, 0);
+  assert.equal(before.json.data.inputs[1].spec, null);
+  assert.match(before.json.data.inputs[1].reason, /until the node executes/);
+  await knime(k, "run", "my:reader");
+  const r = await knime(k, "node", "ports", "my:part");
+  assert.match(r.stdout, /^ {2}1 \(Table\) ← root:1 \[my:reader\]:1: 2 column\(s\)$/m);
+  assert.match(r.stdout, /^ {6}city: String \{Perth, Hobart\}$/m);
+  assert.match(r.stdout, /^ {6}sales: Number \(Integer\) \[4, 13\]$/m);
+  const show = await knime(k, "workflow", "show", "--ports", "--json");
+  assert.deepEqual(show.json.data.nodes[1].inPorts[1].spec.columns.map((c: { name: string }) => c.name), ["city", "sales"]);
+  assert.match((await knime(k, "workflow", "show", "--ports")).stdout, /in: {2}0 \(Flow Variable\): flow variables \| 1 \(Table\): 2 column\(s\)/);
 });
 
 test("guide and nodes need no KNIME", async () => {

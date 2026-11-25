@@ -65,6 +65,10 @@ export interface Translation {
   hint: string;
 }
 
+export const SAVE_BLOCKED_CAUSE = "The project can't be saved in place: it's a component project, a temporary copy of a Hub, "
+  + "Server or archive workflow, read-only, or its folder is locked.";
+export const SAVE_BLOCKED_HINT = "Save it from KNIME instead (Save As, or upload it). `knime workflow show` says why (saveBlocked).";
+
 /** Ordered: the first match wins, so specific entries come before catch-alls for the same status. */
 export const TRANSLATIONS: readonly Translation[] = [
   {
@@ -103,9 +107,23 @@ export const TRANSLATIONS: readonly Translation[] = [
     hint: "Leave that key out of the patch; set secrets in the node's dialog in KNIME.",
   },
   {
+    code: "NOT_AN_IMAGE_PORT", exit: EXIT.REJECTED, status: 400, match: /not an image port|has no output port/i,
+    cause: "Images come only from Image output ports; port 0 is the flow-variable port.",
+    hint: "Leave out --port to use the first image port, or list the ports with `knime node ports <node>`.",
+  },
+  {
     code: "SETTINGS_REJECTED", exit: EXIT.REJECTED, status: 400, match: /rejected these settings|not found|must be|expected/i,
     cause: "The node refused the patched settings (wrong type or shape, or a value it doesn't accept). Nothing changed.",
     hint: "Compare with `knime node settings <node> --json`. Recipes with verified keys: `knime guide recipes`.",
+  },
+  {
+    code: "IMAGE_NOT_READY", exit: EXIT.INCOMPLETE, status: 409, match: /holds no image/i,
+    cause: "An image port is empty until its node executes, and stays empty on an inactive branch.",
+    hint: "Run the node (`knime run <node>`), or use `knime node image <node> --enable`, which runs it.",
+  },
+  {
+    code: "SAVE_BLOCKED", exit: EXIT.REJECTED, status: 409, match: /can't save|saving .* was cancelled/i,
+    cause: SAVE_BLOCKED_CAUSE, hint: SAVE_BLOCKED_HINT,
   },
   {
     code: "BUSY", exit: EXIT.CONFLICT, status: 409,
@@ -135,7 +153,7 @@ export const TRANSLATIONS: readonly Translation[] = [
   {
     code: "CONNECTION_FAILED", exit: EXIT.REJECTED, status: "rpc", match: /connection could not be created/i,
     cause: "KNIME refused the connection: usually a wrong port index (port 0 is the flow-variable port, data ports start at 1), incompatible port types, or a cycle.",
-    hint: "Check the ports with `knime nodes info <alias>` or `knime workflow show --ports`. Learners often have the model on a higher port (random forest: 3).",
+    hint: "Check both nodes' ports with `knime node ports <node>`. Learners often have the model on a higher port (random forest: 3).",
   },
   {
     code: "RPC_NOT_ALLOWED", exit: EXIT.REJECTED, status: "rpc", match: /not allowed|allowlist|-32001/i,
@@ -190,6 +208,26 @@ export const CLI_ERRORS: readonly Pick<Translation, "code" | "exit" | "cause" | 
     code: "CAPABILITY_MISSING", exit: EXIT.UNAVAILABLE,
     cause: "`/status` says the plugin couldn't find a KNIME internal this command needs (e.g. workflowSvg for the canvas).",
     hint: "`knime status --json` shows capabilityProblems. Other commands still work.",
+  },
+  {
+    code: "NO_BROWSER", exit: EXIT.UNAVAILABLE,
+    cause: "A PNG of the canvas needs a headless browser (its text is HTML inside the SVG), and none was found.",
+    hint: "Install Chrome or Chromium, run `npx playwright install chromium`, or set KNIME_CLI_BROWSER; or keep the SVG.",
+  },
+  {
+    code: "NO_COLUMNS", exit: EXIT.REJECTED,
+    cause: "An apply spec's $columns selector reads an output port that has no table spec (not a table, or not configured).",
+    hint: "Check the port with `knime node ports <node>`; `from` is key:port of a spec node's output, 1 being the first data port.",
+  },
+  {
+    code: "NO_IMAGE_PORT", exit: EXIT.NOT_FOUND,
+    cause: "The node has no Image output port.",
+    hint: "For a chart node, `knime node image <node> --enable` adds it and turns image generation on.",
+  },
+  {
+    code: "NO_IMAGE_SETTING", exit: EXIT.REJECTED,
+    cause: "--enable needs the node's generateImage setting, which KNIME's current chart nodes have.",
+    hint: "Check with `knime node settings <node> --filter generateImage`; other nodes can't make images.",
   },
   {
     code: "NO_INSTANCE", exit: EXIT.UNAVAILABLE,

@@ -22,6 +22,8 @@ export interface OptionSpec {
 export interface Output {
   data: unknown;
   text?: string[];
+  /** Printed to stdout as is in human mode, instead of `text` (e.g. an SVG). */
+  raw?: string;
   exit?: number;
 }
 
@@ -38,6 +40,8 @@ export interface Ctx {
 export interface Command {
   path: string[];
   tier: Tier;
+  /** The tier for these options, when an option raises it (e.g. a READ command that can also run nodes). */
+  tierWith?(values: Ctx["values"]): Tier;
   summary: string;
   /** Arguments after the command path, e.g. "<node> <path=value>…". */
   args?: string;
@@ -49,7 +53,7 @@ export interface Command {
 }
 
 export const GLOBAL_OPTIONS: Record<string, OptionSpec> = {
-  json: { type: "boolean", desc: "Print one JSON document on stdout (errors too): {ok, data, warnings, notes} or {ok: false, error}" },
+  json: { type: "boolean", desc: "Print one JSON document on stdout (errors too): {ok, data, warnings, notes, dirty} or {ok: false, error}" },
   pid: { type: "string", arg: "<pid>", desc: "KNIME instance to use (default: KNIME_CLI_PID, else the newest live one)" },
   project: { type: "string", arg: "<id|name>", desc: "Open project to use (default: KNIME_CLI_PROJECT, else the first open one)" },
   workflow: { type: "string", arg: "<id>", desc: "Workflow inside the project: root (default) or a metanode/component id" },
@@ -138,14 +142,44 @@ export function overview(commands: readonly Command[]): string {
   return lines.join("\n") + "\n";
 }
 
+/** The after-the-fact warning of every WRITE and EXEC command that leaves the project with unsaved changes. */
+export function unsavedWarning(project: string): string {
+  return `project "${project}" has unsaved changes; \`knime save\` saves them (the CLI never saves on its own)`;
+}
+
+/**
+ * Before a command that resets nodes (settings changes can't be undone): if the project was already dirty, its last
+ * save is the only way back to a known state, and it predates the earlier changes too.
+ */
+export function warnIfDirtyBeforeReset(ctx: Ctx, dirty: boolean | undefined): void {
+  if (dirty) {
+    ctx.warn("the project already had unsaved changes before this reset, which can't be undone; the last save is the "
+      + "only way back (run `knime save` first to keep a restorable state)");
+  }
+}
+
 /** Runs one invocation; returns the exit code. Never throws. */
 export async function main(commands: readonly Command[], argv: readonly string[], io: Io = defaultIo): Promise<number> {
   const json = argv.includes("--json");
   const warnings: string[] = [];
   let session: Session | undefined;
   let sessionOptions: SessionOptions = {};
+  let tier: Tier | undefined;
+  let dirty: boolean | null | undefined;
   const notes = () => session?.notes ?? [];
   const { command, rest } = findCommand(commands, argv);
+  // After a WRITE or EXEC command, whether it worked or not: does the project now have unsaved changes?
+  const checkDirty = async () => {
+    if (!session || (tier !== "WRITE" && tier !== "EXEC")) return;
+    try {
+      const u = await session.unsaved();
+      dirty = u.dirty;
+      if (u.dirty) warnings.push(unsavedWarning(u.name));
+    } catch {
+      // Best effort: the command's own result or error matters more.
+    }
+  };
+  const dirtyField = () => (dirty === undefined ? {} : { dirty });
   try {
     if (!command) {
       const words = argv.filter((a) => !a.startsWith("-"));
@@ -168,6 +202,7 @@ export async function main(commands: readonly Command[], argv: readonly string[]
       else io.stdout(helpFor(command));
       return EXIT.OK;
     }
+    tier = command.tierWith?.(values) ?? command.tier;
     sessionOptions = { pid: values.pid as string | undefined, project: values.project as string | undefined, workflow: values.workflow as string | undefined };
     const ctx: Ctx = {
       values,
@@ -178,19 +213,22 @@ export async function main(commands: readonly Command[], argv: readonly string[]
       log: (m) => { if (!json) io.stderr(`${m}\n`); },
     };
     const out = await command.run(ctx);
+    await checkDirty();
     const exit = out.exit ?? EXIT.OK;
     if (json) {
-      io.stdout(JSON.stringify({ ok: exit === EXIT.OK, command: command.path.join(" "), notes: notes(), warnings, data: out.data }, null, 2) + "\n");
+      io.stdout(JSON.stringify({ ok: exit === EXIT.OK, command: command.path.join(" "), notes: notes(), warnings, ...dirtyField(), data: out.data }, null, 2) + "\n");
     } else {
       for (const n of notes()) io.stderr(`note: ${n}\n`);
       for (const w of warnings) io.stderr(`warning: ${w}\n`);
-      if (out.text?.length) io.stdout(out.text.join("\n") + "\n");
+      if (out.raw !== undefined) io.stdout(out.raw);
+      else if (out.text?.length) io.stdout(out.text.join("\n") + "\n");
     }
     return exit;
   } catch (e) {
     const err = e instanceof CliError ? e : translate(e);
+    await checkDirty();
     if (json) {
-      io.stdout(JSON.stringify({ ok: false, command: command?.path.join(" "), notes: notes(), warnings, error: err.toJSON() }, null, 2) + "\n");
+      io.stdout(JSON.stringify({ ok: false, command: command?.path.join(" "), notes: notes(), warnings, ...dirtyField(), error: err.toJSON() }, null, 2) + "\n");
     } else {
       for (const n of notes()) io.stderr(`note: ${n}\n`);
       for (const w of warnings) io.stderr(`warning: ${w}\n`);
