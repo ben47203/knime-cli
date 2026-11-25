@@ -52,8 +52,12 @@ export class FakeKnime implements Transport {
     this.connections.push({ id: `${to}_${toPort}`, sourceNode: from, sourcePort: fromPort, destNode: to, destPort: toPort });
   }
 
+  /** What /status reports as capabilities. */
+  capabilities: Record<string, boolean> = { settingsSaveCheck: true, saveRefreshesUi: true, workflowSvg: true };
+
   async status(): Promise<Status> {
-    return { apiVersion: 2, knimeVersion: "5.12.0", pid: 1, ready: true };
+    const problems = Object.entries(this.capabilities).filter(([, v]) => !v).map(([k]) => [k, `${k} not found`]);
+    return { apiVersion: 2, knimeVersion: "5.12.0", pid: 1, ready: true, capabilities: this.capabilities, ...(problems.length ? { capabilityProblems: Object.fromEntries(problems) } : {}) };
   }
 
   async api<T>(path: string, body: Record<string, unknown> = {}): Promise<T> {

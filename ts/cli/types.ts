@@ -29,6 +29,10 @@ export interface Status {
   knimeVersion: string;
   pid: number;
   ready: boolean;
+  /** Whether each KNIME internal the plugin reaches by reflection was found (e.g. `workflowSvg`). */
+  capabilities?: Record<string, boolean>;
+  /** Why, for each capability that is false. */
+  capabilityProblems?: Record<string, string>;
 }
 
 export interface Projects {

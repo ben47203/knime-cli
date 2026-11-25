@@ -237,6 +237,26 @@ export class Session {
     }
   }
 
+  /**
+   * Fails clearly when the plugin reports a capability as missing (a KNIME internal it reaches by reflection wasn't
+   * found). Older plugins report no capabilities; then the request itself decides.
+   */
+  async requireCapability(name: string, what: string): Promise<void> {
+    let st;
+    try {
+      st = await this.transport.status();
+    } catch (e) {
+      throw translate(e, "status");
+    }
+    if (st.capabilities?.[name] === false) {
+      throw new CliError({
+        code: "CAPABILITY_MISSING", exit: EXIT.UNAVAILABLE,
+        message: `This KNIME can't produce ${what}: capability ${name} is unavailable${st.capabilityProblems?.[name] ? ` (${st.capabilityProblems[name]})` : ""}`,
+        hint: "The plugin couldn't reach a KNIME internal it needs in this KNIME version; `knime status --json` lists capabilities. Other commands still work.",
+      });
+    }
+  }
+
   /** One gateway workflow command. */
   async command<T = unknown>(workflowCommand: Record<string, unknown>, context?: string): Promise<T> {
     const target = await this.target();

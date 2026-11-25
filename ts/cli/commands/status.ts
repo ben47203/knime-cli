@@ -35,7 +35,9 @@ export const status: Command = {
     const data = {
       pid: st.pid, url: s.instance?.url, ready: st.ready, apiVersion: st.apiVersion, expectedApiVersion: EXPECTED_API_VERSION,
       knimeVersion: st.knimeVersion, startedAt: s.instance?.startedAt, otherInstances: others,
+      capabilities: st.capabilities, capabilityProblems: st.capabilityProblems,
     };
+    for (const [name, why] of Object.entries(st.capabilityProblems ?? {})) ctx.warn(`capability ${name} is unavailable: ${why}`);
     if (!st.ready) {
       throw new CliError({
         code: "NOT_READY", exit: EXIT.UNAVAILABLE, message: `KNIME pid ${st.pid} is running but its UI isn't ready yet`,

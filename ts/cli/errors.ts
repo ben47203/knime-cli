@@ -118,6 +118,11 @@ export const TRANSLATIONS: readonly Translation[] = [
     hint: "Run `knime workflow show` for the open projects and current node ids, and address your nodes by label.",
   },
   {
+    code: "NOT_SUPPORTED", exit: EXIT.UNAVAILABLE, status: 501,
+    cause: "The plugin can't reach a KNIME internal this request needs in this KNIME version.",
+    hint: "`knime status --json` lists the plugin's capabilities and why any is missing. Other commands still work.",
+  },
+  {
     code: "UNAUTHORISED", exit: EXIT.UNAVAILABLE, status: 401,
     cause: "The token didn't match; the discovery file is probably from an earlier KNIME run.",
     hint: "Restart the CLI command; if it persists, pick the instance explicitly with `--pid` (see `knime status`).",
@@ -180,6 +185,11 @@ export const CLI_ERRORS: readonly Pick<Translation, "code" | "exit" | "cause" | 
     code: "AMBIGUOUS", exit: EXIT.USAGE,
     cause: "A label or suffix matches more than one node or setting.",
     hint: "Use the node id, or write more of the settings path.",
+  },
+  {
+    code: "CAPABILITY_MISSING", exit: EXIT.UNAVAILABLE,
+    cause: "`/status` says the plugin couldn't find a KNIME internal this command needs (e.g. workflowSvg for the canvas).",
+    hint: "`knime status --json` shows capabilityProblems. Other commands still work.",
   },
   {
     code: "NO_INSTANCE", exit: EXIT.UNAVAILABLE,
