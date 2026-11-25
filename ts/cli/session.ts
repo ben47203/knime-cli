@@ -4,9 +4,11 @@
  */
 import { KnimeClient } from "../src/client.ts";
 import { listInstances, type Instance } from "../src/discovery.ts";
+import { readAnnotation, type AnnotationView } from "./annotations.ts";
 import { CliError, EXIT, translate } from "./errors.ts";
+import { plainText, splitLabel } from "./text.ts";
 import type {
-  BinaryResponse, Connection, NodePorts, NodeState, Projects, Transport, WorkflowNode, WorkflowRead, WorkflowState,
+  BinaryResponse, Connection, NodePorts, NodeState, Projects, Transport, WorkflowRead, WorkflowState,
 } from "./types.ts";
 
 /** The plugin API version the CLI was written against. */
@@ -41,7 +43,10 @@ export function pickInstance(instances: readonly Instance[], pid?: string): Inst
 
 export interface NodeView {
   id: string;
+  /** First line of the node's annotation: what lookup, `--prefix` and `apply` match. */
   label?: string;
+  /** Further lines of the annotation: a human note (`knime node note`). */
+  note?: string;
   name: string;
   kind: string;
   factory?: string;
@@ -56,6 +61,8 @@ export interface NodeView {
 export class Snapshot {
   readonly nodes: NodeView[];
   readonly connections: Connection[];
+  /** Workflow annotations, back to front. */
+  readonly annotations: AnnotationView[];
   readonly raw: WorkflowRead;
   readonly workflowId: string;
   /** The project has unsaved changes (from workflow/state); undefined if the server didn't say. */
@@ -69,9 +76,11 @@ export class Snapshot {
     const templates = read.workflow.nodeTemplates ?? {};
     this.nodes = Object.values(read.workflow.nodes ?? {}).map((n) => {
       const s = states.get(n.id);
+      const { label, note } = splitLabel(plainText(n.annotation?.text));
       return {
         id: n.id,
-        label: labelOf(n),
+        label,
+        note,
         name: s?.name ?? n.name ?? (n.templateId ? templates[n.templateId]?.name : undefined) ?? n.kind ?? "?",
         kind: n.kind ?? "node",
         factory: n.templateId,
@@ -83,6 +92,7 @@ export class Snapshot {
       };
     }).sort((a, b) => idOrder(a.id) - idOrder(b.id));
     this.connections = Object.values(read.workflow.connections ?? {});
+    this.annotations = (read.workflow.workflowAnnotations ?? []).map(readAnnotation);
   }
 
   byId(id: string): NodeView | undefined {
@@ -157,6 +167,32 @@ export class Snapshot {
     }
   }
 
+  /** Annotations whose tag starts with `prefix`. */
+  annotationsWithPrefix(prefix: string): AnnotationView[] {
+    return this.annotations.filter((a) => a.tag?.startsWith(prefix));
+  }
+
+  /** An annotation by id (`root_3`), bare index (`3`, within this workflow) or tag; ids win, like nodes. */
+  resolveAnnotation(ref: string): AnnotationView {
+    const id = /^\d+$/.test(ref) ? `${this.workflowId}_${ref}` : ref;
+    const byId = this.annotations.find((a) => a.id === id);
+    if (byId) return byId;
+    const tagged = this.annotations.filter((a) => a.tag === ref);
+    if (tagged.length === 1) return tagged[0]!;
+    if (tagged.length > 1) {
+      throw new CliError({
+        code: "AMBIGUOUS", exit: EXIT.USAGE,
+        message: `Tag "${ref}" is on ${tagged.length} annotations: ${tagged.map((a) => a.id).join(", ")}`,
+        hint: "Use the annotation id, or retag one of them with `knime annotate update <id> --tag <tag>`.",
+      });
+    }
+    throw new CliError({
+      code: "ANNOTATION_NOT_FOUND", exit: EXIT.NOT_FOUND,
+      message: `No annotation with id or tag "${ref}" in workflow ${this.workflowId}`,
+      hint: "Run `knime annotate list` for current ids and tags. Ids are reused after deletes; prefer tags.",
+    });
+  }
+
   #asId(ref: string): string | undefined {
     if (/^\d+$/.test(ref)) return `${this.workflowId}:${ref}`;
     if (/^root(:\d+)+$/.test(ref)) return ref;
@@ -168,13 +204,6 @@ export class Snapshot {
     const xs = this.nodes.filter((n) => !exclude?.(n)).map((n) => n.position?.x ?? 0);
     return xs.length ? Math.max(...xs) : 0;
   }
-}
-
-function labelOf(n: WorkflowNode): string | undefined {
-  const text = n.annotation?.text;
-  if (!text?.value) return undefined;
-  const v = text.contentType === "text/html" ? text.value.replace(/<[^>]*>/g, "") : text.value;
-  return v.trim() || undefined;
 }
 
 function idOrder(id: string): number {

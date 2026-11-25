@@ -4,6 +4,7 @@
     {
       "key": "reader",
       "alias": "csv-reader",
+      "note": "California housing; set HOUSING_CSV to the file",
       "settings": {
         "source.path.path": "${HOUSING_CSV:-${HOME}/knime-workspace/knime-cli-demo/california-housing/housing.csv}"
       }
@@ -22,6 +23,7 @@
     {
       "key": "partition",
       "alias": "partition",
+      "note": "80/20 split, seed 42",
       "settings": { "partitioningMode": "RELATIVE", "percentage": 80, "mode": "RANDOM", "seed": 42, "seed_is_present": true }
     },
     {
@@ -76,6 +78,11 @@
     { "from": "rf-learn:3", "to": "rf-predict:1" },
     { "from": "partition:2", "to": "rf-predict:2" },
     { "from": "rf-predict:1", "to": "rf-score:1" }
+  ],
+  "annotations": [
+    { "key": "prep", "text": "Data prep\nread, impute medians, split", "colour": "Meadow", "around": ["reader", "missing", "partition"] },
+    { "key": "linear", "text": "Linear regression", "colour": "Carrot", "around": ["learn", "predict", "score"] },
+    { "key": "forest", "text": "Random forest", "colour": "AquamarineDark", "around": ["rf-learn", "rf-predict", "rf-score"] }
   ],
   "run": ["score", "rf-score"]
 }

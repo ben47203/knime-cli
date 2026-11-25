@@ -187,7 +187,17 @@ export const TRANSLATIONS: readonly Translation[] = [
     hint: "Check both nodes' ports with `knime node ports <node>`. Learners often have the model on a higher port (random forest: 3).",
   },
   {
-    code: "RPC_NOT_ALLOWED", exit: EXIT.REJECTED, status: "rpc", match: /not allowed|allowlist|-32001/i,
+    code: "ANNOTATION_NOT_FOUND", exit: EXIT.NOT_FOUND, status: "rpc", match: /annotation not found/i,
+    cause: "No workflow annotation has that id. Annotation ids (root_3) are positions in the workflow's list and are reused after deletes.",
+    hint: "Run `knime annotate list` for current ids, and address your annotations by tag.",
+  },
+  {
+    code: "BAD_COLOUR", exit: EXIT.USAGE, status: "rpc", match: /failed to parse colou?r/i,
+    cause: "KNIME only accepts annotation colours as hex, e.g. #3CB44B.",
+    hint: "Use `--colour #RRGGBB` or a palette name; `knime annotate add --help` lists them.",
+  },
+  {
+    code: "RPC_NOT_ALLOWED", exit: EXIT.REJECTED, status: "rpc", match: /JSON-RPC -32001\b|not available via knime-cli/i,
     cause: "Only WorkflowService.executeWorkflowCommand and undo/redo are allowed through /rpc.",
     hint: "Use the /api endpoints (the CLI's commands) for reads.",
   },
@@ -227,8 +237,8 @@ export const CLI_ERRORS: readonly Pick<Translation, "code" | "exit" | "cause" | 
   },
   {
     code: "REFUSED", exit: EXIT.REFUSED,
-    cause: "A destructive command would touch nodes that aren't scoped by a label.",
-    hint: "Label your nodes and delete by label or `--prefix`, or pass --force if you really mean it.",
+    cause: "A destructive command would touch nodes that aren't scoped by a label, or annotations without a tag.",
+    hint: "Label your nodes (tag your annotations) and delete by label, tag or `--prefix`, or pass --force if you really mean it.",
   },
   {
     code: "AMBIGUOUS", exit: EXIT.USAGE,
@@ -259,6 +269,11 @@ export const CLI_ERRORS: readonly Pick<Translation, "code" | "exit" | "cause" | 
     code: "NO_IMAGE_SETTING", exit: EXIT.REJECTED,
     cause: "--enable needs the node's generateImage setting, which KNIME's current chart nodes have.",
     hint: "Check with `knime node settings <node> --filter generateImage`; other nodes can't make images.",
+  },
+  {
+    code: "BAD_COLOUR", exit: EXIT.USAGE,
+    cause: "A --colour (or a spec's colour) is neither hex nor a palette name.",
+    hint: "Use #RRGGBB, or a name like Meadow, Carrot, Coral, SilverSand (or green, orange, red, grey).",
   },
   {
     code: "NO_INSTANCE", exit: EXIT.UNAVAILABLE,

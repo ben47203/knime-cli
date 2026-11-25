@@ -43,7 +43,7 @@ export const workflowShow: Command = {
       workflowId: target.workflowId,
       contentHash: snap.raw.contentHash,
       nodes: nodes.map((n) => ({
-        id: n.id, label: n.label, name: n.name, kind: n.kind, factory: n.factory, alias: n.factory ? byFactory(n.factory)?.alias : undefined,
+        id: n.id, label: n.label, note: n.note, name: n.name, kind: n.kind, factory: n.factory, alias: n.factory ? byFactory(n.factory)?.alias : undefined,
         state: n.state, message: n.message,
         ...(ctx.values.ports ? { inPorts: ports.get(n.id)?.inputs, outPorts: ports.get(n.id)?.outputs } : {}),
       })),
@@ -65,6 +65,7 @@ export const workflowShow: Command = {
       `${"id".padEnd(w.id)}  ${"label".padEnd(w.label)}  ${"name".padEnd(w.name)}  state`,
       ...nodes.flatMap((n) => {
         const lines = [`${n.id.padEnd(w.id)}  ${(n.label ?? "").padEnd(w.label)}  ${n.name.padEnd(w.name)}  ${n.state ?? "?"}${n.message ? `  ${n.message.type}: ${oneLine(n.message.text)}` : ""}`];
+        if (n.note) lines.push(...n.note.split("\n").map((l) => `${"".padEnd(w.id)}  ${"".padEnd(w.label)}  ↳ ${l}`));
         const p = ports.get(n.id);
         if (p) {
           const brief = (x: InputPort | OutputPort) => `${[x.index, x.name].filter((v) => v !== undefined && v !== "").join(" ")} (${x.type}): ${specSummary(x.spec, x.reason)}`;

@@ -18,7 +18,8 @@ export const apply: Command = {
     timeout: { type: "string", arg: "<seconds>", desc: "Per execution step (default 600)" },
   },
   notes: [
-    "Only nodes labelled <prefix>… are reused or removed; nothing else is touched. The project isn't saved: `knime save`.",
+    "Only nodes labelled <prefix>… (and annotations tagged [[<prefix>…]]) are reused or removed; nothing else is",
+    "touched. The project isn't saved: `knime save`.",
     "Settings changes reset downstream nodes and can't be undone. Safe to re-run after a failure or a 504.",
     "Spec format and behaviour: `knime guide apply`. Example: cli/examples/housing-small.json.",
     "Settings may pick columns from upstream specs: {\"$columns\": {\"from\": \"missing:1\", \"type\": \"number\", \"exclude\": [\"y\"]}}.",
@@ -51,6 +52,9 @@ export const apply: Command = {
       text: [
         ...formatPlan(r.plan),
         `settings: ${r.patched.filter((p) => p.changed).length} node(s) changed, ${r.patched.filter((p) => !p.changed).length} already matched`,
+        ...(r.annotations.length
+          ? [`annotations: ${(["added", "updated", "kept"] as const).map((k) => `${r.annotations.filter((a) => a.action === k).length} ${k}`).join(", ")}`]
+          : []),
         ...(r.run ? formatReport(r.run) : ["not run (--no-run)"]),
       ],
       exit: ok ? EXIT.OK : EXIT.INCOMPLETE,

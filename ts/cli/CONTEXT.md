@@ -34,6 +34,7 @@ Every command takes `--json` (machine-readable output, errors included) and show
 - **Project → workflow → node.** `projectId` comes from the open projects (`--project`, by id or name). `workflowId` is `root`, or a metanode or component id, to reach nodes inside it (`--workflow`).
 - **Node ids** look like `root:7` or `root:5:0:3`.
   - **Ids are reused after a delete**, so never cache ids across runs. Identify your own nodes by **label** (`knime node label root:7 cal:rf-learn`), and scope any cleanup to your labels only. Never "delete everything".
+  - A label is the **first line** of the text under a node; further lines are a human **note** (`knime node note`), which never affects lookup. See `knime guide annotations`.
 - **Ports:** port **0** is the hidden flow-variable port, so data ports start at **1**. Learners often output the model on a higher port. For example, the random forest learner's model is on port 3. A wrong port gives only "Connection could not be created".
   - `knime node ports <node>` lists a placed node's ports from KNIME: names, types, what they're connected to, and each table's column names and types (with domains), or the reason a spec is missing ("not connected", "no spec until the node executes", "upstream not configured"). `knime workflow show --ports` gives a one-line summary per port for every node.
 - **Node states:** IDLE (not configurable yet), CONFIGURED, QUEUED, EXECUTING, EXECUTED, plus a warning or error message.
@@ -150,7 +151,20 @@ Settings keys verified in the dogfooding runs. `knime nodes info <alias>` has th
   - `knime node ports <node>` shows the columns a selector would choose from.
 - Order: nodes are visited upstream first; each node's direct inputs are executed before its settings are patched, so the settings exist. Then `run` (default: every node without outgoing connections in the spec) is executed and checked like `knime run`.
 - Port numbers in `connections` aren't checked offline: KNIME checks them when connecting, and a refusal names the ports both nodes really have.
-- `--dry-run` shows the structural plan (adds, reuses, removals, connections) without touching KNIME. `--rebuild` removes and re-adds every prefixed node.
+- `"note": "…"` on a node writes a human note below its label; leave it out to keep whatever note is there, and `""` removes it.
+- `"annotations": [{"key": "prep", "text": "Data prep", "colour": "Meadow", "around": ["reader", "partition"]}]` draws a box round those nodes, tagged `[[<prefix><key>]]`, or at `"bounds": [x, y, w, h]`. On a re-run it's reused by tag; its text, colour and fit are refreshed only if they changed, so a box someone dragged is moved back. Tagged annotations the spec no longer has are removed. See `knime guide annotations`.
+- `--dry-run` shows the structural plan (adds, reuses, removals, connections, annotations) without touching KNIME. `--rebuild` removes and re-adds every prefixed node and tagged annotation.
+
+## Canvas annotations and node notes {#annotations}
+- **Workflow annotations** are the coloured boxes on the canvas, behind the nodes. `knime annotate add` draws one, `list` shows id, tag, colour, bounds and text, and `update`, `move` and `rm` change them. All are gateway commands, so they're undoable in KNIME.
+  - **Group a stage:** `knime annotate add --text "Data prep" --colour Meadow --tag my:prep --prefix my:prep-` fits a padded box round every node labelled `my:prep-…`, or use `--around a,b,c` with ids or labels. It leaves room for the node names above, the labels below, and the text at the top. Re-fit after adding nodes: `knime annotate move my:prep --prefix my:prep-`.
+  - **Ids** look like `root_3` and are positions in the workflow's annotation list: **reused after a delete**, just like node ids. So the CLI **tags** what it writes with a visible last paragraph, `[[my:prep]]`. Commands accept the tag in place of the id. `rm` refuses untagged annotations (exit 9) without `--force`, and `rm --prefix my:` only removes your tags.
+  - **Text** is stored as HTML (`<p>` paragraphs; the KNIME editor also writes `<b>`, `<i>`, `<ul>`, headings). `--text` takes plain text, with `\n` for new lines; `--html` passes markup through. Any update turns an old plain-text annotation into HTML.
+  - **Colours** are border colours, given as `#RRGGBB` or as one of KNIME's palette names: None, SilverSand (the default), DoveGray, AquamarineDark, CornflowerDark, Yellow, Carrot, Coral, MeadowLight, Meadow, Avocado, Petrol, PetrolDark, Wood, WoodDark. Plain names work too: green, orange, red, blue, teal, grey, brown. KNIME itself only accepts hex.
+  - A negative coordinate needs `=`: `--by=-300,0`, `--bounds=-50,0,200,100`.
+- **Node notes:** KNIME has **one** text field under each node. The CLI reads its first line as the **label**, the machine name that lookup, `--prefix`, `node rm` and `apply` match, and the lines after it as a **note** for humans.
+  - `knime node note my:reader "Reads the 2024 extract"` sets the note and keeps the label; `knime node label` keeps the note; `--clear` removes it; `node add --note` sets both at once. `workflow show` lists notes under the label (↳).
+  - The trade-off: the note is visible in KNIME, right under the node, but it shares that field. A label must be one line, and a note added in the KNIME UI belongs to the label unless it's on a second line. On an unlabelled node, the note goes below an empty first line, so it isn't mistaken for a label.
 
 ## What this means for the CLI's design {#design}
 1. **A `guide` command** with short topics (model, settings, execution, errors, recipes), so a consumer with no context can bootstrap. Agents read `--help` and `guide` before acting.

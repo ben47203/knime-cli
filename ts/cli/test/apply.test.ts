@@ -89,6 +89,7 @@ test("the example spec resolves", () => {
   const byDefault = resolveSpec(raw, { HOME: "/home/u" });
   assert.equal(byDefault.nodes[0]!.settings!["source.path.path"], "/home/u/knime-workspace/knime-cli-demo/california-housing/housing.csv");
   assert.equal(s.nodes.find((n) => n.key === "rf-learn")!.settings!.nrModels, 100);
+  assert.deepEqual(s.annotations.map((a) => [a.tag, a.around.length]), [["hs:prep", 3], ["hs:linear", 3], ["hs:forest", 3]]);
 });
 
 test("apply reports whether the project was dirty before it changed anything", async () => {
@@ -254,4 +255,91 @@ test("a learner left incomplete after the set is reported", async () => {
   const spec = resolveSpec({ prefix: "t:", nodes: [{ key: "rf", alias: "rf-learn", settings: { nrModels: 10 } }] });
   const r = await apply(k.session(), spec, { noRun: true });
   assert.match(r.warnings.join("\n"), /t:rf: settings are still incomplete \(save failed after nrModels; splitCriterion is missing\)/);
+});
+
+const ANNOTATED: PipelineSpec = {
+  ...SPEC,
+  nodes: SPEC.nodes.map((n) => (n.key === "reader" ? { ...n, note: "Reads the extract" } : n)),
+  annotations: [
+    { key: "prep", text: "Data prep", colour: "meadow", around: ["reader", "part"] },
+    { key: "model", text: "Model", colour: "Carrot", around: ["learn", "pred"] },
+  ],
+};
+
+test("resolveSpec checks annotations: keys, nodes, placement and colour", () => {
+  const s = resolveSpec(ANNOTATED);
+  assert.deepEqual(s.annotations.map((a) => [a.tag, a.colour, a.html]), [
+    ["t:prep", "#3CB44B", "<p>Data prep</p><p>[[t:prep]]</p>"],
+    ["t:model", "#FF9632", "<p>Model</p><p>[[t:model]]</p>"],
+  ]);
+  try {
+    resolveSpec({
+      ...SPEC,
+      annotations: [
+        { key: "a", around: ["nope"] },
+        { key: "a", bounds: [0, 0, 10, 10], around: ["reader"] },
+        { key: "c", colour: "chartreuse", bounds: [0, 0, 10, 10] },
+        { key: "d" },
+        { key: "e", bounds: [0, 0, 0, 10] },
+      ],
+    });
+    assert.fail("should throw");
+  } catch (e) {
+    const p = (e as CliError).details as string[];
+    assert.ok(p.some((x) => /unknown node "nope"/.test(x)));
+    assert.ok(p.some((x) => /duplicate key "a"/.test(x)));
+    assert.ok(p.some((x) => /\(a\): give around .* or bounds, exactly one/.test(x)));
+    assert.ok(p.some((x) => /\(c\).*chartreuse/.test(x)));
+    assert.ok(p.some((x) => /\(d\): give around/.test(x)));
+    assert.ok(p.some((x) => /\(e\): bounds must be/.test(x)));
+  }
+});
+
+test("apply annotates stages round their nodes and notes nodes, then re-runs as a no-op", async () => {
+  const k = fake();
+  k.annotate({ text: "<p>not ours</p>" });
+  const spec = resolveSpec(ANNOTATED);
+  const r = await apply(k.session(), spec, { noRun: true });
+  assert.deepEqual(r.annotations.map((a) => [a.tag, a.action]), [["t:prep", "added"], ["t:model", "added"]]);
+  const reader = [...k.nodes.values()].find((n) => n.label?.startsWith("t:reader"))!;
+  assert.equal(reader.label, "t:reader\nReads the extract");
+  const prep = k.annotations.find((a) => a.text?.value?.includes("[[t:prep]]"))!;
+  const part = [...k.nodes.values()].find((n) => n.label === "t:part")!;
+  for (const n of [reader, part]) assert.ok(n.x > prep.bounds.x && n.x + 32 < prep.bounds.x + prep.bounds.width);
+  assert.equal(prep.borderColor, "#3CB44B");
+
+  const before = k.commands().length;
+  const again = await apply(k.session(), spec, { noRun: true });
+  assert.deepEqual(again.annotations.map((a) => a.action), ["kept", "kept"]);
+  assert.deepEqual(k.commands().slice(before).map((c) => c.kind), [], "nothing to send on a re-run");
+  assert.equal(k.annotations.length, 3);
+});
+
+test("apply refreshes changed annotations, removes dropped ones, and leaves untagged ones alone", async () => {
+  const k = fake();
+  const theirs = k.annotate({ text: "<p>not ours</p>" });
+  await apply(k.session(), resolveSpec(ANNOTATED), { noRun: true });
+  const prepId = k.annotations.find((a) => a.text?.value?.includes("[[t:prep]]"))!.id;
+  k.annotations.find((a) => a.id === prepId)!.bounds.x -= 500; // someone dragged it
+  const changed = resolveSpec({
+    ...ANNOTATED,
+    nodes: SPEC.nodes.map((n) => (n.key === "reader" ? { ...n, note: "" } : n)),
+    annotations: [{ key: "prep", text: "Prep", colour: "coral", around: ["reader", "part"] }],
+  });
+  const plan = planApply(changed, await k.session().snapshot());
+  assert.deepEqual(plan.removeAnnotations.map((a) => a.tag), ["t:model"]);
+  assert.deepEqual(plan.nodes.find((n) => n.key === "reader")!.note, "clear");
+  const r = await apply(k.session(), changed, { noRun: true });
+  assert.deepEqual(r.annotations, [{ key: "prep", tag: "t:prep", id: prepId, action: "updated", changed: ["text", "colour", "bounds"] }]);
+  assert.deepEqual(k.annotations.map((a) => a.id).sort(), [theirs.id, prepId].sort());
+  assert.equal([...k.nodes.values()].find((n) => n.label?.startsWith("t:reader"))!.label, "t:reader");
+});
+
+test("a spec without note leaves a node's note alone", async () => {
+  const k = fake();
+  await apply(k.session(), resolveSpec(ANNOTATED), { noRun: true });
+  const r = await apply(k.session(), resolveSpec(SPEC), { noRun: true });
+  assert.equal(r.plan.nodes.find((n) => n.key === "reader")!.note, undefined);
+  assert.equal([...k.nodes.values()].find((n) => n.label?.startsWith("t:reader"))!.label, "t:reader\nReads the extract");
+  assert.deepEqual(r.plan.removeAnnotations.map((a) => a.tag).sort(), ["t:model", "t:prep"], "annotations dropped from the spec go");
 });

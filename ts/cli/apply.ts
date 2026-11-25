@@ -4,6 +4,9 @@
  */
 import { homedir } from "node:os";
 
+import {
+  boundsAround, composeHtml, DEFAULT_COLOUR, parseColour, sameBounds, textLines, type Bounds,
+} from "./annotations.ts";
 import { byAlias, byFactory, isFactoryName, type CatalogueEntry } from "./catalogue.ts";
 import { findSelectors, selectColumns, selectorProblems, substitute, type ColumnSelector } from "./columns.ts";
 import { CliError, EXIT, usage } from "./errors.ts";
@@ -13,6 +16,7 @@ import { isObject, leavesOfSpec } from "./paths.ts";
 import { connectExplained, tableColumns } from "./ports.ts";
 import { buildPreset, overlay, type PresetRef } from "./presets.ts";
 import type { NodeView, Session, Snapshot } from "./session.ts";
+import { htmlToText, joinLabel } from "./text.ts";
 import type { ColumnSpec, Json, JsonObject, SetResult, Settings } from "./types.ts";
 
 export interface SpecNode {
@@ -24,6 +28,21 @@ export interface SpecNode {
   preset?: PresetRef;
   /** Grid position [column, row]; defaults to the node's depth and its index at that depth. */
   at?: [number, number];
+  /** A human-readable note below the node's label. Left alone when absent; "" removes it. */
+  note?: string;
+}
+
+export interface SpecAnnotation {
+  key: string;
+  /** Plain text (lines become paragraphs), or `html` for the editor's own markup. */
+  text?: string;
+  html?: string;
+  /** Hex or palette name; default SilverSand. */
+  colour?: string;
+  /** Node keys to fit the box around… */
+  around?: string[];
+  /** …or explicit [x, y, width, height]. */
+  bounds?: [number, number, number, number];
 }
 
 export interface SpecConnection {
@@ -37,6 +56,20 @@ export interface PipelineSpec {
   connections?: SpecConnection[];
   /** Keys to execute at the end; default: every node without an outgoing connection. */
   run?: string[];
+  /** Canvas annotations, tagged `<prefix><key>`. */
+  annotations?: SpecAnnotation[];
+}
+
+export interface ResolvedAnnotation {
+  key: string;
+  tag: string;
+  /** The HTML to store, tag line included. */
+  html: string;
+  colour: string;
+  around: string[];
+  bounds?: Bounds;
+  /** Lines of text, tag included: room left at the top when fitting around nodes. */
+  lines: number;
 }
 
 export interface Endpoint {
@@ -60,6 +93,7 @@ export interface ResolvedSpec {
   nodes: ResolvedNode[];
   connections: { from: Endpoint; to: Endpoint }[];
   run: string[];
+  annotations: ResolvedAnnotation[];
 }
 
 const KEY = /^[A-Za-z0-9_.-]+$/;
@@ -128,6 +162,7 @@ export function resolveSpec(raw: unknown, env?: Record<string, string | undefine
       problems.push(`${where} (${n.key}): needs alias or factory`);
     }
     if (n.settings !== undefined && !isObject(n.settings)) problems.push(`${where} (${n.key}): settings must be an object`);
+    if (n.note !== undefined && typeof n.note !== "string") problems.push(`${where} (${n.key}): note must be a string`);
     let settings: JsonObject | undefined;
     try {
       settings = n.settings && isObject(n.settings) ? (expandEnv(n.settings, env) as JsonObject) : undefined;
@@ -186,6 +221,7 @@ export function resolveSpec(raw: unknown, env?: Record<string, string | undefine
   const sinks = ordered.filter((n) => !connections.some((c) => c.from.key === n.key)).map((n) => n.key);
   const run = spec.run ?? sinks;
   for (const k of run) if (!nodes.has(k)) problems.push(`run: unknown node "${k}"`);
+  const annotations = resolveAnnotations(spec, nodes, problems, env);
   if (problems.length) {
     throw new CliError({
       code: "BAD_SPEC", exit: EXIT.USAGE,
@@ -194,7 +230,60 @@ export function resolveSpec(raw: unknown, env?: Record<string, string | undefine
       details: problems,
     });
   }
-  return { prefix: spec.prefix, nodes: ordered, connections, run };
+  return { prefix: spec.prefix, nodes: ordered, connections, run, annotations };
+}
+
+function resolveAnnotations(spec: PipelineSpec, nodes: Map<string, ResolvedNode>, problems: string[], env?: Record<string, string | undefined>): ResolvedAnnotation[] {
+  if (spec.annotations === undefined) return [];
+  if (!Array.isArray(spec.annotations)) {
+    problems.push("annotations must be an array");
+    return [];
+  }
+  const out: ResolvedAnnotation[] = [];
+  const keys = new Set<string>();
+  for (const [i, a] of spec.annotations.entries()) {
+    const where = `annotations[${i}]`;
+    if (typeof a?.key !== "string" || !KEY.test(a.key)) {
+      problems.push(`${where}.key must match ${KEY}`);
+      continue;
+    }
+    const at = `${where} (${a.key})`;
+    if (keys.has(a.key)) problems.push(`${where}: duplicate key "${a.key}"`);
+    keys.add(a.key);
+    if (a.text !== undefined && a.html !== undefined) problems.push(`${at}: give text or html, not both`);
+    for (const f of ["text", "html", "colour"] as const) {
+      if (a[f] !== undefined && typeof a[f] !== "string") problems.push(`${at}: ${f} must be a string`);
+    }
+    const around = a.around ?? [];
+    if (!Array.isArray(around) || around.some((k) => typeof k !== "string")) problems.push(`${at}: around must be an array of node keys`);
+    else for (const k of around) if (!nodes.has(k)) problems.push(`${at}: around names unknown node "${k}"`);
+    let bounds: Bounds | undefined;
+    if (a.bounds !== undefined) {
+      const b = a.bounds;
+      if (!Array.isArray(b) || b.length !== 4 || !b.every(Number.isInteger) || b[2] <= 0 || b[3] <= 0) {
+        problems.push(`${at}: bounds must be [x, y, width, height] (integers, positive size)`);
+      } else {
+        bounds = { x: b[0], y: b[1], width: b[2], height: b[3] };
+      }
+    }
+    if ((around.length > 0) === (a.bounds !== undefined)) problems.push(`${at}: give around (node keys) or bounds, exactly one`);
+    let colour = DEFAULT_COLOUR;
+    let text: string | undefined;
+    let html: string | undefined;
+    try {
+      if (a.colour !== undefined) colour = parseColour(String(a.colour));
+      if (typeof a.text === "string") text = expandEnv(a.text, env) as string;
+      if (typeof a.html === "string") html = expandEnv(a.html, env) as string;
+    } catch (e) {
+      problems.push(`${at}: ${(e as Error).message}`);
+    }
+    const tag = `${spec.prefix}${a.key}`;
+    out.push({
+      key: a.key, tag, html: composeHtml({ text, html }, tag), colour, around: Array.isArray(around) ? around : [], bounds,
+      lines: textLines(text ?? (html !== undefined ? htmlToText(html) : undefined), tag),
+    });
+  }
+  return out;
 }
 
 /** Where a selector reads its columns: its `from`, else the output feeding the node's input 1. */
@@ -254,6 +343,15 @@ export interface PlannedNode {
   action: "add" | "reuse";
   id?: string;
   position?: { x: number; y: number };
+  /** A reused node whose note the spec changes. */
+  note?: "set" | "clear";
+}
+
+export interface PlannedAnnotation {
+  key: string;
+  tag: string;
+  action: "add" | "reuse";
+  id?: string;
 }
 
 export interface PlannedConnection {
@@ -269,6 +367,8 @@ export interface ApplyPlan {
   nodes: PlannedNode[];
   connections: PlannedConnection[];
   run: string[];
+  removeAnnotations: { id: string; tag: string; reason: string }[];
+  annotations: PlannedAnnotation[];
 }
 
 const GRID_X = 170;
@@ -299,7 +399,10 @@ export function planApply(spec: ResolvedSpec, snap: Snapshot, opts: { rebuild?: 
     const row = rowsAtDepth.get(s.depth) ?? 0;
     rowsAtDepth.set(s.depth, row + 1);
     const existing = reuse.get(s.key);
-    if (existing) return { key: s.key, label: s.label, factory: s.factory, action: "reuse", id: existing.id };
+    if (existing) {
+      const note = s.note === undefined || (s.note.trim() || undefined) === existing.note ? undefined : s.note.trim() ? "set" : "clear";
+      return { key: s.key, label: s.label, factory: s.factory, action: "reuse", id: existing.id, ...(note ? { note } : {}) };
+    }
     const [col, r] = s.at ?? [s.depth, row];
     return { key: s.key, label: s.label, factory: s.factory, action: "add", position: { x: baseX + col * GRID_X, y: 100 + r * GRID_Y } };
   });
@@ -326,18 +429,38 @@ export function planApply(spec: ResolvedSpec, snap: Snapshot, opts: { rebuild?: 
       }
     }
   }
-  return { prefix: spec.prefix, remove, disconnect, nodes, connections, run: spec.run };
+  // Annotations: the same ownership rule, by tag.
+  const removeAnnotations: ApplyPlan["removeAnnotations"] = [];
+  const reuseAnn = new Map<string, string>();
+  for (const a of snap.annotationsWithPrefix(spec.prefix)) {
+    const key = a.tag!.slice(spec.prefix.length);
+    const wanted = spec.annotations.some((x) => x.key === key);
+    if (opts.rebuild) removeAnnotations.push({ id: a.id, tag: a.tag!, reason: "--rebuild" });
+    else if (!wanted) removeAnnotations.push({ id: a.id, tag: a.tag!, reason: "not in the spec" });
+    else if (reuseAnn.has(key)) removeAnnotations.push({ id: a.id, tag: a.tag!, reason: `duplicate tag (keeping ${reuseAnn.get(key)})` });
+    else reuseAnn.set(key, a.id);
+  }
+  const annotations: PlannedAnnotation[] = spec.annotations.map((a) => {
+    const id = reuseAnn.get(a.key);
+    return id ? { key: a.key, tag: a.tag, action: "reuse", id } : { key: a.key, tag: a.tag, action: "add" };
+  });
+  return { prefix: spec.prefix, remove, disconnect, nodes, connections, run: spec.run, removeAnnotations, annotations };
 }
 
 export function formatPlan(p: ApplyPlan): string[] {
   const lines: string[] = [];
   for (const r of p.remove) lines.push(`- remove ${r.id} [${r.label}] (${r.reason})`);
   for (const d of p.disconnect) lines.push(`- disconnect ${d.from} → ${d.to} (${d.reason})`);
+  for (const a of p.removeAnnotations) lines.push(`- remove annotation ${a.id} [[${a.tag}]] (${a.reason})`);
   for (const n of p.nodes) {
     lines.push(n.action === "add" ? `+ add ${n.label} (${shortFactory(n.factory)})` : `= reuse ${n.id} [${n.label}]`);
+    if (n.note) lines.push(`~ ${n.note} note on ${n.label}`);
   }
   for (const c of p.connections) {
     lines.push(`${c.action === "keep" ? "=" : "+"} ${c.action} ${c.from.key}:${c.from.port} → ${c.to.key}:${c.to.port}`);
+  }
+  for (const a of p.annotations) {
+    lines.push(a.action === "add" ? `+ annotate [[${a.tag}]]` : `= reuse annotation ${a.id} [[${a.tag}]] (text, colour and bounds refreshed if changed)`);
   }
   lines.push(`> then run: ${p.run.join(", ")}`);
   return lines;
@@ -354,6 +477,8 @@ export interface ApplyResult {
   plan: ApplyPlan;
   ids: Record<string, string>;
   patched: { key: string; changed: boolean; changes: Change[] }[];
+  /** Annotation key → id and what was sent. */
+  annotations: { key: string; tag: string; id: string; action: "added" | "updated" | "kept"; changed: string[] }[];
   run?: RunReport;
   warnings: string[];
 }
@@ -372,7 +497,7 @@ export async function apply(session: Session, spec: ResolvedSpec, opts: ApplyOpt
   const snap = await session.snapshot();
   const plan = planApply(spec, snap, opts);
   opts.onStart?.(snap);
-  const result: ApplyResult = { plan, ids: {}, patched: [], warnings: [] };
+  const result: ApplyResult = { plan, ids: {}, patched: [], annotations: [], warnings: [] };
 
   if (plan.remove.length) {
     const nodeIds = plan.remove.map((r) => r.id);
@@ -381,6 +506,11 @@ export async function apply(session: Session, spec: ResolvedSpec, opts: ApplyOpt
     await session.api("/api/wait", { nodeIds, waitMs: 30_000 }, "wait for cancel");
     await session.command({ kind: "delete", nodeIds, annotationIds: [], connectionIds: [] }, `delete ${nodeIds.length} old node(s)`);
     log(`removed ${nodeIds.length} node(s): ${plan.remove.map((r) => r.label).join(", ")}`);
+  }
+  if (plan.removeAnnotations.length) {
+    const annotationIds = plan.removeAnnotations.map((a) => a.id);
+    await session.command({ kind: "delete", nodeIds: [], annotationIds, connectionIds: [] }, `delete ${annotationIds.length} old annotation(s)`);
+    log(`removed ${annotationIds.length} annotation(s): ${plan.removeAnnotations.map((a) => a.tag).join(", ")}`);
   }
   if (plan.disconnect.length) {
     await session.command({ kind: "delete", nodeIds: [], annotationIds: [], connectionIds: plan.disconnect.map((d) => d.id) }, "disconnect");
@@ -393,8 +523,11 @@ export async function apply(session: Session, spec: ResolvedSpec, opts: ApplyOpt
   for (const node of spec.nodes) {
     const planned = plan.nodes.find((p) => p.key === node.key)!;
     if (planned.action === "add") {
-      ids[node.key] = await addLabelled(session, planned, snap, result.warnings);
+      ids[node.key] = await addLabelled(session, planned, node.note?.trim() || undefined, snap, result.warnings);
       log(`added ${planned.label} as ${ids[node.key]}`);
+    } else if (planned.note) {
+      await session.command({ kind: "update_node_label", nodeId: planned.id, label: joinLabel(planned.label, node.note?.trim() || undefined) }, `note ${planned.label}`);
+      log(`${planned.note === "set" ? "set" : "removed"} the note on ${planned.label}`);
     }
     for (const c of plan.connections.filter((x) => x.to.key === node.key && x.action === "connect")) {
       await connectExplained(session, { node: ids[c.from.key]!, port: c.from.port }, { node: ids[c.to.key]!, port: c.to.port },
@@ -458,6 +591,8 @@ export async function apply(session: Session, spec: ResolvedSpec, opts: ApplyOpt
     result.patched.push({ key: node.key, changed, changes: pp.changes });
   }
 
+  if (spec.annotations.length) await placeAnnotations(session, spec, plan, ids, result, log);
+
   if (!opts.noRun) {
     log(`running ${plan.run.join(", ")}`);
     result.run = await runNodes(session, plan.run.map((k) => ids[k]!), { timeoutMs: opts.timeoutMs });
@@ -499,7 +634,44 @@ async function resolveColumns(session: Session, node: ResolvedNode, ids: Record<
  * add_node then label. If the add times out (504, probably applied), the new node is found by diffing the workflow
  * and labelled anyway, so a re-run doesn't leave an unlabelled duplicate.
  */
-async function addLabelled(session: Session, n: PlannedNode, before: Snapshot, warnings: string[]): Promise<string> {
+/** Adds or refreshes each spec annotation, fitted round its nodes where they are now. */
+async function placeAnnotations(
+  session: Session, spec: ResolvedSpec, plan: ApplyPlan, ids: Record<string, string>, result: ApplyResult, log: (l: string) => void,
+): Promise<void> {
+  const snap = await session.snapshot();
+  for (const a of spec.annotations) {
+    const planned = plan.annotations.find((p) => p.key === a.key)!;
+    const bounds = a.bounds ?? boundsAround(a.around.map((k) => snap.byId(ids[k]!) ?? { id: ids[k]! }), a.lines);
+    if (planned.action === "add") {
+      const r = await session.command<{ newAnnotationId?: string }>({ kind: "add_workflow_annotation", bounds, borderColor: a.colour }, `annotate ${a.tag}`);
+      const id = r?.newAnnotationId;
+      if (!id) throw new CliError({ code: "ERROR", exit: EXIT.ERROR, message: `add annotation ${a.tag} returned no id` });
+      await session.command({ kind: "update_workflow_annotation", annotationId: id, text: a.html }, `text of ${a.tag}`);
+      result.annotations.push({ key: a.key, tag: a.tag, id, action: "added", changed: ["bounds", "colour", "text"] });
+      log(`annotated ${a.tag} as ${id}`);
+      continue;
+    }
+    const cur = snap.annotations.find((x) => x.id === planned.id)!;
+    const changed: string[] = [];
+    const text = cur.raw !== a.html || cur.contentType !== "text/html";
+    const colour = cur.colour?.toLowerCase() !== a.colour.toLowerCase();
+    if (text || colour) {
+      await session.command({
+        kind: "update_workflow_annotation", annotationId: cur.id, ...(text ? { text: a.html } : {}), ...(colour ? { borderColor: a.colour } : {}),
+      }, `update ${a.tag}`);
+      if (text) changed.push("text");
+      if (colour) changed.push("colour");
+    }
+    if (!sameBounds(cur.bounds, bounds)) {
+      await session.command({ kind: "transform_workflow_annotation", annotationId: cur.id, bounds }, `move ${a.tag}`);
+      changed.push("bounds");
+    }
+    result.annotations.push({ key: a.key, tag: a.tag, id: cur.id, action: changed.length ? "updated" : "kept", changed });
+    if (changed.length) log(`updated ${a.tag} (${changed.join(", ")})`);
+  }
+}
+
+async function addLabelled(session: Session, n: PlannedNode, note: string | undefined, before: Snapshot, warnings: string[]): Promise<string> {
   let id: string;
   try {
     const r = await session.command<{ newNodeId?: string }>(
@@ -515,6 +687,6 @@ async function addLabelled(session: Session, n: PlannedNode, before: Snapshot, w
     id = fresh[0]!.id;
     warnings.push(`add ${n.label} timed out but the node appeared as ${id}; labelled it and carried on`);
   }
-  await session.command({ kind: "update_node_label", nodeId: id, label: n.label }, `label ${id}`);
+  await session.command({ kind: "update_node_label", nodeId: id, label: joinLabel(n.label, note) }, `label ${id}`);
   return id;
 }
