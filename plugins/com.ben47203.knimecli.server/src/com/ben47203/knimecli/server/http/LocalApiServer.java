@@ -10,6 +10,7 @@ import java.security.MessageDigest;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
@@ -25,8 +26,8 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 
 /**
- * Loopback-only HTTP server exposing a filtered KNIME gateway JSON-RPC API ({@code /rpc}) and side-effect-free read
- * endpoints ({@code /api/*}).
+ * Loopback-only HTTP server exposing a filtered KNIME gateway JSON-RPC API ({@code /rpc}) and the {@code /api/*}
+ * endpoints, which take JSON and answer with JSON or, for images, raw bytes.
  *
  * <p>
  * Deliberately free of KNIME/OSGi imports so it can be exercised outside the platform. Every request must:
@@ -62,10 +63,28 @@ public final class LocalApiServer {
         byte[] handle(byte[] request);
     }
 
-    /** Handles one POST /api/* call: JSON request body in, JSON response body out. */
+    /** Handles one POST /api/* call: JSON request body in, a JSON or binary response out. */
     @FunctionalInterface
     public interface ApiHandler {
-        byte[] handle(byte[] body) throws Exception; // NOSONAR: failures become 500s in one place
+        ApiResponse handle(byte[] body) throws Exception; // NOSONAR: failures become 500s in one place
+    }
+
+    /**
+     * A successful /api/* response body and its media type. Errors are always JSON, so a client can tell an image from
+     * an error by the status code alone.
+     */
+    public record ApiResponse(String contentType, byte[] body) {
+        private static final String JSON = "application/json; charset=utf-8";
+
+        public ApiResponse {
+            Objects.requireNonNull(contentType);
+            Objects.requireNonNull(body);
+        }
+
+        /** A JSON body, already serialised. */
+        public static ApiResponse json(final byte[] body) {
+            return new ApiResponse(JSON, body);
+        }
     }
 
     /** Thrown by an {@link ApiHandler} to return a specific HTTP status, e.g. 400 or 404. */
@@ -265,7 +284,7 @@ public final class LocalApiServer {
         try {
             var response = api.handle(request);
             m_log.info("knime-cli: API " + path + " -> 200 in " + (System.nanoTime() - startNanos) / 1_000_000 + " ms");
-            send(ex, 200, response);
+            send(ex, 200, response.contentType(), response.body());
         } catch (ApiException e) {
             m_log.info("knime-cli: API " + path + " -> " + e.status() + " (" + e.getMessage() + ")");
             sendError(ex, e.status(), e.getMessage());
@@ -291,7 +310,7 @@ public final class LocalApiServer {
             ex.sendResponseHeaders(204, -1); // JSON-RPC notification: no response body
             return;
         }
-        send(ex, 200, response);
+        send(ex, 200, ApiResponse.JSON, response);
     }
 
     /**
@@ -399,12 +418,13 @@ public final class LocalApiServer {
     }
 
     private static void sendJson(final HttpExchange ex, final int status, final String json) throws IOException {
-        send(ex, status, json.getBytes(StandardCharsets.UTF_8));
+        send(ex, status, ApiResponse.JSON, json.getBytes(StandardCharsets.UTF_8));
     }
 
-    private static void send(final HttpExchange ex, final int status, final byte[] body) throws IOException {
+    private static void send(final HttpExchange ex, final int status, final String contentType, final byte[] body)
+        throws IOException {
         var h = ex.getResponseHeaders();
-        h.set("Content-Type", "application/json; charset=utf-8");
+        h.set("Content-Type", contentType);
         h.set("Cache-Control", "no-store");
         h.set("X-Content-Type-Options", "nosniff");
         ex.sendResponseHeaders(status, body.length);

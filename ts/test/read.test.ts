@@ -50,9 +50,24 @@ describe("/status", () => {
     // The discovery file and /status come from the same values.
     assert.equal(s.knimeVersion, fx.instance.knimeVersion);
     assert.equal(s.apiVersion, fx.instance.apiVersion);
-    for (const key of ["apiVersion", "knimeVersion", "pid", "ready"] satisfies (keyof Status)[]) {
+    for (const key of ["apiVersion", "knimeVersion", "pid", "ready", "capabilities"] satisfies (keyof Status)[]) {
       assert.ok(key in s, `/status has ${key}`);
     }
+  });
+
+  // The plugin reaches some KNIME internals by reflection. A KNIME upgrade that moves one turns its capability off,
+  // and the feature degrades (or answers 501) instead of failing; this test makes that loud.
+  test("finds every KNIME internal the plugin reaches by reflection", async () => {
+    const s = await fx.client.status();
+    assert.deepEqual(
+      Object.keys(s.capabilities).sort(),
+      ["saveRefreshesUi", "settingsSaveCheck", "workflowSvg"],
+      "a new reflective target needs adding here",
+    );
+    for (const [name, available] of Object.entries(s.capabilities)) {
+      assert.equal(available, true, `${name} unavailable: ${s.capabilityProblems?.[name] ?? "no reason given"}`);
+    }
+    assert.equal(s.capabilityProblems, undefined);
   });
 });
 
@@ -65,6 +80,14 @@ describe("/api/projects", () => {
       assert.ok(p.name === null || typeof p.name === "string");
     }
     assert.ok(projects.some((p) => p.projectId === fx.target.projectId));
+  });
+
+  test("says which projects have unsaved changes", async () => {
+    const { projects } = await fx.client.api<Projects>("/api/projects");
+    const ours = projects.find((p) => p.projectId === fx.target.projectId);
+    assert.equal(typeof ours?.dirty, "boolean", "an open project in the UI is loaded");
+    const state = await fx.client.api<WorkflowState>("/api/workflow/state", fx.target);
+    assert.equal(ours?.dirty, state.dirty);
   });
 });
 
