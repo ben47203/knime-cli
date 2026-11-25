@@ -7,6 +7,7 @@ import { CliError, EXIT, usage } from "./errors.ts";
 import { runNodes, type RunReport } from "./execute.ts";
 import { formatChanges, planObject, type Change } from "./patch.ts";
 import { isObject } from "./paths.ts";
+import { buildPreset, overlay, type PresetRef } from "./presets.ts";
 import type { NodeView, Session, Snapshot } from "./session.ts";
 import type { Json, JsonObject, SetResult, Settings } from "./types.ts";
 
@@ -15,6 +16,8 @@ export interface SpecNode {
   alias?: string;
   factory?: string;
   settings?: JsonObject;
+  /** A catalogue preset (`"regression"`, or `{"name": "regression", "target": …}`); `settings` override its keys. */
+  preset?: PresetRef;
   /** Grid position [column, row]; defaults to the node's depth and its index at that depth. */
   at?: [number, number];
 }
@@ -111,6 +114,10 @@ export function resolveSpec(raw: unknown, env?: Record<string, string | undefine
     let settings: JsonObject | undefined;
     try {
       settings = n.settings && isObject(n.settings) ? (expandEnv(n.settings, env) as JsonObject) : undefined;
+      if (n.preset !== undefined) {
+        const ref = expandEnv(n.preset as Json, env) as PresetRef;
+        settings = overlay(buildPreset(entry?.alias, ref).settings, settings ?? {});
+      }
     } catch (e) {
       problems.push(`${where} (${n.key}): ${(e as Error).message}`);
     }
@@ -384,9 +391,10 @@ export async function apply(session: Session, spec: ResolvedSpec, opts: ApplyOpt
         hint: node.inputs.length ? "Its inputs ran but gave it no table spec; check what they output." : "The node has no settings to set.",
       });
     }
-    if (current.complete === false) {
-      result.warnings.push(`${node.label}: settings are incomplete (${current.problem ?? "the node's save failed"}); patching may fail`);
-    }
+    // An incomplete read is expected on a fresh tree learner, and its preset completes it; only what's still
+    // incomplete after the set (or with nothing to set) is worth a warning.
+    let complete = current.complete !== false;
+    let problem = current.problem;
     let pp;
     try {
       pp = planObject(current.model, node.settings);
@@ -398,8 +406,14 @@ export async function apply(session: Session, spec: ResolvedSpec, opts: ApplyOpt
     if (Object.keys(pp.patch).length) {
       const r = await session.api<SetResult>("/api/node/settings/set", { nodeId: ids[node.key], model: pp.patch }, `set ${node.label}`);
       changed = r.changed;
+      complete = r.complete !== false;
+      problem = r.problem;
       if (r.message?.type === "ERROR") result.warnings.push(`${node.label} after set: ${r.message.text}`);
       if (changed) log(`set ${node.label}:\n  ${formatChanges(pp.changes.filter((c) => c.kind !== "same")).join("\n  ")}`);
+    }
+    if (!complete) {
+      result.warnings.push(`${node.label}: settings are still incomplete (${problem ?? "the node's own save failed"}); `
+        + `add the missing keys with typed values, or use a preset (\`knime nodes info ${node.entry?.alias ?? "<alias>"}\`)`);
     }
     // A changed node resets itself and everything downstream.
     if (changed) for (const k of [node.key, ...downstreamKeys(spec, node.key)]) executed.delete(ids[k] ?? "");

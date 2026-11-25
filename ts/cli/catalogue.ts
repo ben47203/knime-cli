@@ -47,6 +47,39 @@ const FILTER = (key: string) => ({
   [`${key}.filter-type`]: "STANDARD",
 });
 
+const TREE_KEYS = {
+  targetColumn: "column to predict (null on a fresh node)",
+  seed: "decimal string; null = a new random seed per run",
+  maxLevels: "tree depth; -1 = unlimited",
+  minNodeSize: "minimum rows for a split; -1 = unset",
+  minChildSize: "minimum rows per child; -1 = unset (≤ minNodeSize/2 when both set)",
+  dataFraction: "rows sampled per tree, (0, 1]",
+  isDataSelectionWithReplacement: "bootstrap sampling",
+  columnSamplingMode: "Linear | SquareRoot | Absolute | None",
+  columnFractionPerTree: "with Linear: fraction of columns sampled",
+  columnAbsolutePerTree: "with Absolute: number of columns",
+  isUseDifferentAttributesAtEachNode: "resample columns at every node (random-forest style)",
+  nrModels: "number of trees (ignored by the single tree)",
+  splitCriterion: "typed string; InformationGainRatio (ignored for regression, but must parse)",
+  missingValueHandling: "typed string; XGBoost | Surrogate",
+  "columnFilterConfig.included_names": "features with enforce_option EnforceInclusion",
+  "columnFilterConfig.excluded_names": "non-features with enforce_option EnforceExclusion",
+  rowSamplingMode: "typed string; Random for regression",
+};
+
+const TREE_GOTCHAS = [
+  "A fresh node's read stops after nrModels (complete: false): its save throws on the null split criterion. Wire it first, then set the whole `regression` preset in one go; afterwards plain patches work.",
+  "Set targetColumn and the feature filter explicitly; otherwise it picks the last numeric column as the target.",
+];
+
+const TREE_PREDICT_KEYS = {
+  changePredictionColumnName: "boolean",
+  predictionColumnName: "output column",
+  appendPredictionConfidence: "boolean (forest and boosting predictors)",
+};
+
+const TREE_PREDICT_GOTCHAS = ["Settings read {} until the model input is connected; then the options appear."];
+
 export const CATALOGUE: readonly CatalogueEntry[] = [
   {
     alias: "csv-reader", name: "CSV Reader", category: "IO", verified: true, tags: ["read", "file", "import"],
@@ -104,8 +137,7 @@ export const CATALOGUE: readonly CatalogueEntry[] = [
     gotchas: [
       "append_column: true means REPLACE; set false to append a new column.",
       "The expression needs a full statement (`return $a$ / $b$;`) or it fails with a cryptic \"~\" error.",
-      "expression, header, replaced_column and return_type are hidden nulls: missing from `get`, but `set` accepts them.",
-      "Rows are processed in order, so header state can hold running aggregates (the GroupBy workaround).",
+      "expression, header, replaced_column and return_type are null on a fresh node.",
     ],
   },
   {
@@ -149,9 +181,9 @@ export const CATALOGUE: readonly CatalogueEntry[] = [
     in: [M(1, "regression model"), T(2, "data to predict")], out: [T(1, "data with prediction")], needsInputSpec: true,
     keys: {
       has_custom_predicition_name: "boolean (sic: 'predicition')",
-      custom_prediction_name: "prediction column name (hidden null until set)",
+      custom_prediction_name: "prediction column name (null until set)",
     },
-    gotchas: ["custom_prediction_name is a hidden null: not in `get`, but `set` accepts it."],
+    gotchas: ["Settings appear once the model input is connected."],
   },
   {
     alias: "normalizer", name: "Normalizer (PMML)", category: "Preprocessing", verified: true, tags: ["scale", "min-max", "z-score"],
@@ -189,45 +221,50 @@ export const CATALOGUE: readonly CatalogueEntry[] = [
   {
     alias: "rf-learn", name: "Random Forest Learner (Regression)", category: "Mining", verified: true, tags: ["tree", "forest", "ensemble", "learner"],
     factory: "org.knime.base.node.mine.treeensemble2.node.randomforest.learner.regression.RandomForestRegressionLearnerNodeFactory",
-    in: [T(1, "training data")], out: [T(1, "out-of-bag predictions"), T(2, "attribute statistics"), M(3, "forest model", "model")],
-    keys: {},
+    in: [T(1, "input data")], out: [T(1, "out-of-bag predictions"), T(2, "attribute statistics"), M(3, "random forest model", "model")],
+    needsInputSpec: false, keys: TREE_KEYS,
     gotchas: [
-      "The model is on port 3.",
-      "Can't be configured through the API yet: its saved settings are cut short (null split criterion), so any patch fails. It guesses the target as the last numeric column; shape the input so that's right.",
+      "The model is on port 3; port 2 (attribute statistics) is a usage-based importance table, with the attribute as row id.",
+      ...TREE_GOTCHAS,
+      "Tuning (California housing): Linear column sampling at 0.33 per node beat 0.5 slightly (R² 0.832); 500 trees were no better than 300 but 3× slower.",
     ],
   },
   {
     alias: "rf-predict", name: "Random Forest Predictor (Regression)", category: "Mining", verified: true, tags: ["tree", "forest", "predict"],
     factory: "org.knime.base.node.mine.treeensemble2.node.randomforest.predictor.regression.RandomForestRegressionPredictorNodeFactory",
-    in: [M(1, "forest model", "model"), T(2, "data")], out: [T(1, "data with prediction")],
-    keys: { changePredictionColumnName: "boolean", predictionColumnName: "output column" },
-    gotchas: [],
+    in: [M(1, "random forest model", "model"), T(2, "input data")], out: [T(1, "prediction output")],
+    keys: TREE_PREDICT_KEYS, gotchas: TREE_PREDICT_GOTCHAS,
   },
   {
-    alias: "gbt-learn", name: "Gradient Boosted Trees Learner (Regression)", category: "Mining", verified: true, tags: ["tree", "boosting", "learner"],
+    alias: "gbt-learn", name: "Gradient Boosted Trees Learner (Regression)", category: "Mining", verified: true, tags: ["tree", "boosting", "gbt", "learner"],
     factory: "org.knime.base.node.mine.treeensemble2.node.gradientboosting.learner.regression.GradientBoostingRegressionLearnerNodeFactory2",
-    in: [T(1, "training data")], out: [M(1, "GBT model", "model")],
-    keys: {},
-    gotchas: ["Use gbt-predict; the PMML predictor rejects its model.", "Unconfigurable via the API for now (cut-short settings), like the other tree learners."],
+    in: [T(1, "input data")], out: [M(1, "gradient boosting model", "model")],
+    needsInputSpec: false,
+    keys: { ...TREE_KEYS, learningRate: "typed double; shrinkage per tree, default 0.1", alphaFraction: "typed double; Huber quantile, default 0.95, must stay < 1" },
+    gotchas: [
+      "Use gbt-predict; the PMML predictor rejects its model.",
+      ...TREE_GOTCHAS,
+      "alphaFraction 1.0 passes the set but execute fails with \"Index N out of bounds for length N\" (N = training rows). Keep it below 1.",
+      "Sensitive to its settings (California housing): depth 4, learning rate 0.1, full data gave R² 0.812 / 0.842 / 0.847 at 100 / 500 / 1000 trees; depth 6–8 or dataFraction 0.8 gave about 0.79–0.80, minNodeSize/minChildSize 20/10 gave 0.801.",
+    ],
   },
   {
-    alias: "gbt-predict", name: "Gradient Boosted Trees Predictor (Regression)", category: "Mining", verified: true, tags: ["tree", "boosting", "predict"],
+    alias: "gbt-predict", name: "Gradient Boosted Trees Predictor (Regression)", category: "Mining", verified: true, tags: ["tree", "boosting", "gbt", "predict"],
     factory: "org.knime.base.node.mine.treeensemble2.node.gradientboosting.predictor.regression.GradientBoostingPredictorNodeFactory",
-    in: [M(1, "GBT model", "model"), T(2, "data")], out: [T(1, "data with prediction")],
-    keys: { changePredictionColumnName: "boolean", predictionColumnName: "output column" },
-    gotchas: [],
+    in: [M(1, "gradient boosting model", "model"), T(2, "input data")], out: [T(1, "output data")],
+    keys: TREE_PREDICT_KEYS, gotchas: TREE_PREDICT_GOTCHAS,
   },
   {
     alias: "rtree-learn", name: "Simple Regression Tree Learner", category: "Mining", verified: true, tags: ["tree", "learner"],
     factory: "org.knime.base.node.mine.treeensemble2.node.regressiontree.learner.RegressionTreeLearnerNodeFactory",
-    in: [T(1, "training data")], out: [M(1, "tree model", "model")],
-    keys: {}, gotchas: ["Unconfigurable via the API for now (cut-short settings)."],
+    in: [T(1, "input data")], out: [M(1, "regression tree model", "model")],
+    needsInputSpec: false, keys: TREE_KEYS, gotchas: [...TREE_GOTCHAS, "nrModels is ignored; tune maxLevels, minNodeSize and minChildSize."],
   },
   {
     alias: "rtree-predict", name: "Simple Regression Tree Predictor", category: "Mining", verified: true, tags: ["tree", "predict"],
     factory: "org.knime.base.node.mine.treeensemble2.node.regressiontree.predictor.RegressionTreePredictorNodeFactory",
-    in: [M(1, "tree model", "model"), T(2, "data")], out: [T(1, "data with prediction")],
-    keys: {}, gotchas: [],
+    in: [M(1, "regression tree model", "model"), T(2, "input data")], out: [T(1, "predicted output")],
+    keys: { changePredictionColumnName: "boolean", predictionColumnName: "output column" }, gotchas: TREE_PREDICT_GOTCHAS,
   },
   {
     alias: "column-appender", name: "Column Appender", category: "Manipulation", verified: true, tags: ["join", "append", "combine"],
@@ -260,19 +297,34 @@ export const CATALOGUE: readonly CatalogueEntry[] = [
       "group_cols.included_names": "columns that define a duplicate", row_selection: "FIRST | LAST | …",
       remove_duplicates: "boolean", add_row_duplicate_flag: "boolean",
     },
-    gotchas: ["With row_selection LAST after running-total snippets, it's the GroupBy workaround."],
+    gotchas: [],
   },
   {
-    alias: "column-renamer", name: "Column Renamer", category: "Manipulation", verified: false, tags: ["rename"],
+    alias: "column-renamer", name: "Column Renamer", category: "Manipulation", verified: true, tags: ["rename", "columns"],
     factory: "org.knime.base.node.preproc.column.renamer.ColumnRenamerNodeFactory",
-    in: [T(1, "table")], out: [T(1, "table")], keys: {},
-    gotchas: ["Effectively unconfigurable: renamings is a list the API can't grow. Copy columns with a Java Snippet instead."],
+    in: [T(1, "input table")], out: [T(1, "output table")], needsInputSpec: false,
+    keys: { "renamings.<n>": "typed config {oldName, newName}, one entry per rename, keyed \"0\", \"1\", …" },
+    gotchas: [
+      "A fresh node's renamings is {}; add entries as typed configs (see the `rename` preset), several in one set.",
+      "An entry whose oldName doesn't match a column passes the column through unrenamed, with no error or warning. Check names exactly (e.g. GroupBy's Count*(col)).",
+    ],
   },
   {
-    alias: "groupby", name: "GroupBy", category: "Manipulation", verified: false, tags: ["aggregate", "group", "sum", "mean"],
+    alias: "groupby", name: "GroupBy", category: "Manipulation", verified: true, tags: ["aggregate", "group", "count", "mean"],
     factory: "org.knime.base.node.preproc.groupby.GroupByNodeFactory",
-    in: [T(1, "table")], out: [T(1, "aggregated table")], keys: {},
-    gotchas: ["Factory class not verified on this install.", "Blocked for now: its aggregation settings are a DataType array the API can't build. Use running-total snippets + dedupe, or a Group Loop."],
+    in: [T(1, "data table")], out: [T(1, "group table")], needsInputSpec: true,
+    keys: {
+      "grouByColumns.InclList": "group columns (sic: grouBy)",
+      "aggregationColumn.columnNames": "aggregated columns, parallel to the arrays below",
+      "aggregationColumn.columnTypes": "typed config[] of {cell_class, is_null: false}, one per column",
+      "aggregationColumn.aggregationMethod": "method ids, e.g. Count, Mean_V4.6",
+      "aggregationColumn.inclMissingVals": "typed boolean[], one per column",
+    },
+    gotchas: [
+      "Fresh empty arrays read back as string arrays: give columnTypes and inclMissingVals with $type (see the `aggregate` preset).",
+      "Outputs are named <Method>(<column>), but Count's is Count*(<column>) (it counts rows, missing included); Mean's is Mean(<column>).",
+      "The same column can be aggregated twice with different methods.",
+    ],
   },
   {
     alias: "table-creator", name: "Table Creator", category: "IO", verified: true, tags: ["manual", "data", "source"],

@@ -59,5 +59,7 @@ test("every translation code is unique, and the guide lists them all", () => {
 test("node message hints", () => {
   assert.match(nodeMessageHint('Error in snippet: unexpected token "~"')!, /return/);
   assert.match(nodeMessageHint("No column spec available")!, /upstream/);
+  assert.match(nodeMessageHint("Execute failed: Index 16512 out of bounds for length 16512")!, /alphaFraction/);
+  assert.equal(nodeMessageHint("Index 3 out of bounds for length 7"), undefined);
   assert.equal(nodeMessageHint("all good"), undefined);
 });

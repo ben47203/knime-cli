@@ -76,9 +76,10 @@ test("resolveSpec reports every problem at once", () => {
 test("the example spec resolves", () => {
   const raw = JSON.parse(readFileSync(new URL("../examples/housing-small.json", import.meta.url), "utf8"));
   const s = resolveSpec(raw, { HOUSING_CSV: "/data/housing.csv" });
-  assert.deepEqual(s.nodes.map((n) => n.key), ["reader", "missing", "partition", "learn", "predict", "score"]);
+  assert.deepEqual(s.nodes.map((n) => n.key), ["reader", "missing", "partition", "learn", "predict", "score", "rf-learn", "rf-predict", "rf-score"]);
   assert.equal(s.nodes[0]!.settings!["source.path.path"], "/data/housing.csv");
-  assert.deepEqual(s.run, ["score"]);
+  assert.deepEqual(s.run, ["score", "rf-score"]);
+  assert.equal(s.nodes.find((n) => n.key === "rf-learn")!.settings!.nrModels, 100);
 });
 
 test("planner adds everything into an empty workflow, right of existing nodes", async () => {
@@ -183,4 +184,38 @@ test("a 504 on another command stops with GATEWAY_TIMEOUT", async () => {
   const k = fake();
   k.timeoutNext = "connect";
   await assert.rejects(apply(k.session(), resolveSpec(SPEC)), (e: CliError) => e.code === "GATEWAY_TIMEOUT" && /connect/.test(e.message));
+});
+
+test("a fresh tree learner's incomplete read is completed by its preset, quietly, and re-applying is a no-op", async () => {
+  const k = fake();
+  const fresh = { targetColumn: null, seed: "1", maxLevels: -1, minNodeSize: -1, minChildSize: -1, dataFraction: 1,
+    isDataSelectionWithReplacement: false, hardCodedRootColumn: null, columnSamplingMode: "SquareRoot",
+    columnFractionPerTree: 1, columnAbsolutePerTree: 10, isUseDifferentAttributesAtEachNode: false, nrModels: 100 };
+  k.defaults[F("rf-learn")] = { inPorts: 2, outPorts: 4, model: fresh, completesWith: "splitCriterion" };
+  k.defaults[F("rf-predict")] = { inPorts: 3, outPorts: 2 };
+  const spec = resolveSpec({
+    prefix: "t:",
+    nodes: [
+      { key: "reader", alias: "csv-reader" },
+      { key: "rf", alias: "rf-learn", preset: { name: "regression", target: "y" }, settings: { nrModels: 50 } },
+      { key: "pred", alias: "rf-predict" },
+    ],
+    connections: [{ from: "reader", to: "rf" }, { from: "rf:3", to: "pred:1" }, { from: "reader", to: "pred:2" }],
+  });
+  const r = await apply(k.session(), spec);
+  assert.deepEqual(r.warnings, []);
+  const rf = [...k.nodes.values()].find((n) => n.label === "t:rf")!;
+  assert.equal(rf.model.splitCriterion, "InformationGainRatio");
+  assert.equal(rf.model.nrModels, 50);
+  assert.ok(r.run!.ok);
+  const again = await apply(k.session(), spec);
+  assert.ok(again.patched.every((p) => !p.changed), JSON.stringify(again.patched.filter((p) => p.changed)));
+});
+
+test("a learner left incomplete after the set is reported", async () => {
+  const k = fake();
+  k.defaults[F("rf-learn")] = { inPorts: 2, outPorts: 4, model: { nrModels: 100, targetColumn: null }, completesWith: "splitCriterion" };
+  const spec = resolveSpec({ prefix: "t:", nodes: [{ key: "rf", alias: "rf-learn", settings: { nrModels: 10 } }] });
+  const r = await apply(k.session(), spec, { noRun: true });
+  assert.match(r.warnings.join("\n"), /t:rf: settings are still incomplete \(save failed after nrModels; splitCriterion is missing\)/);
 });
