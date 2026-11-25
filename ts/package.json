@@ -33,7 +33,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json && node -e \"require('node:fs').copyFileSync('cli/CONTEXT.md','dist/cli/CONTEXT.md')\"",
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json && node -e \"require('node:fs').copyFileSync('cli/CONTEXT.md','dist/cli/CONTEXT.md');require('node:fs').copyFileSync('../README.md','README.md')\"",
     "prepack": "npm run build",
     "test": "node --test --test-concurrency=1 'test/*.test.ts'",
     "test:cli": "node --test 'cli/test/*.test.ts'",
