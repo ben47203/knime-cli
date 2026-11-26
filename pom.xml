@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>com.ben47203.knimecli</groupId>
+  <artifactId>com.ben47203.knimecli.parent</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+  <packaging>pom</packaging>
+  <name>KNIME CLI Local API (parent)</name>
+
+  <properties>
+    <tycho.version>5.0.4</tycho.version>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+  </properties>
+
+  <modules>
+    <module>releng/com.ben47203.knimecli.target</module>
+    <module>plugins/com.ben47203.knimecli.server</module>
+    <module>features/com.ben47203.knimecli.feature</module>
+    <module>releng/com.ben47203.knimecli.update</module>
+  </modules>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.eclipse.tycho</groupId>
+        <artifactId>tycho-maven-plugin</artifactId>
+        <version>${tycho.version}</version>
+        <extensions>true</extensions>
+      </plugin>
+      <plugin>
+        <groupId>org.eclipse.tycho</groupId>
+        <artifactId>target-platform-configuration</artifactId>
+        <version>${tycho.version}</version>
+        <configuration>
+          <target>
+            <artifact>
+              <groupId>com.ben47203.knimecli</groupId>
+              <artifactId>com.ben47203.knimecli.target</artifactId>
+              <version>0.1.0-SNAPSHOT</version>
+            </artifact>
+          </target>
+          <environments>
+            <environment><os>macosx</os><ws>cocoa</ws><arch>aarch64</arch></environment>
+            <environment><os>macosx</os><ws>cocoa</ws><arch>x86_64</arch></environment>
+            <environment><os>win32</os><ws>win32</ws><arch>x86_64</arch></environment>
+            <environment><os>linux</os><ws>gtk</ws><arch>x86_64</arch></environment>
+          </environments>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

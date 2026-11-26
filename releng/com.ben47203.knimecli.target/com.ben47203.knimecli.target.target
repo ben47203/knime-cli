@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<?pde version="3.8"?>
+<!-- Build target: the KNIME Analytics Platform 5.12 LTS site, which also
+     mirrors the Eclipse platform and third-party bundles KNIME ships.
+     The documented /analytics-platform/5.12/ URL is an HTTP redirect to this
+     one, and Tycho's p2 transport rejects it, so point at the target directly. -->
+<target name="KNIME Analytics Platform 5.12">
+  <locations>
+    <location includeAllPlatforms="false" includeConfigurePhase="false" includeMode="planner" includeSource="false" type="InstallableUnit">
+      <repository location="https://update.knime.com/analytics-platform/lts/5.12/"/>
+      <unit id="org.knime.features.core.feature.group" version="0.0.0"/>
+      <unit id="org.knime.features.gateway.feature.group" version="0.0.0"/>
+      <unit id="org.eclipse.platform.feature.group" version="0.0.0"/>
+    </location>
+  </locations>
+  <targetJRE path="org.eclipse.jdt.launching.JRE_CONTAINER/org.eclipse.jdt.internal.debug.ui.launcher.StandardVMType/JavaSE-21"/>
+</target>
