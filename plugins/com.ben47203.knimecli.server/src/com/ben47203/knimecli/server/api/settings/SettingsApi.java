@@ -25,6 +25,7 @@ import com.ben47203.knimecli.server.api.NodeIds;
 import com.ben47203.knimecli.server.api.NodeStates;
 import com.ben47203.knimecli.server.api.NodeStates.Message;
 import com.ben47203.knimecli.server.api.NodeStates.State;
+import com.ben47203.knimecli.server.api.Reflected;
 import com.ben47203.knimecli.server.api.Requests;
 import com.ben47203.knimecli.server.http.LocalApiServer.ApiException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -45,10 +46,12 @@ public final class SettingsApi {
 
     /**
      * {@code NodeModel.saveSettingsTo}, which is protected. Core's own caller ({@code Node.saveModelSettingsTo})
-     * catches and only logs what the node throws, so calling it directly is the one way to see that exception.
-     * Null if it can't be reached, in which case reads aren't checked for completeness.
+     * catches and only logs what the node throws, so calling it directly is the one way to see that exception. If it
+     * can't be reached, reads aren't checked for completeness.
      */
-    private static final Method SAVE_SETTINGS_TO = saveSettingsTo();
+    private static final Reflected<Method> SAVE_SETTINGS_TO = Reflected.find("NodeModel.saveSettingsTo",
+        "incomplete node settings won't be flagged",
+        () -> NodeModel.class.getDeclaredMethod("saveSettingsTo", NodeSettingsWO.class));
 
     private SettingsApi() {
     }
@@ -223,14 +226,15 @@ public final class SettingsApi {
      * failed save only explains {@code read} if {@code read}'s model is exactly what the failed save wrote.
      */
     static String problem(final NodeContainer nc, final NodeSettings read) {
-        if (!(nc instanceof NativeNodeContainer nnc) || SAVE_SETTINGS_TO == null) {
+        var saveSettingsTo = SAVE_SETTINGS_TO.orNull();
+        if (!(nc instanceof NativeNodeContainer nnc) || saveSettingsTo == null) {
             return null; // NOSONAR: null means "complete"
         }
         var scratch = new NodeSettings(MODEL);
         Throwable failure = null;
         NodeContext.pushContext(nc);
         try {
-            SAVE_SETTINGS_TO.invoke(nnc.getNodeModel(), scratch);
+            saveSettingsTo.invoke(nnc.getNodeModel(), scratch);
         } catch (InvocationTargetException e) {
             failure = e.getCause() != null ? e.getCause() : e;
         } catch (IllegalAccessException | RuntimeException e) { // NOSONAR: the check is best effort
@@ -252,14 +256,8 @@ public final class SettingsApi {
             + " e.g. {\"key\": {\"$type\": \"string\", \"value\": \"...\"}}, through node/settings/set.";
     }
 
-    private static Method saveSettingsTo() {
-        try {
-            var method = NodeModel.class.getDeclaredMethod("saveSettingsTo", NodeSettingsWO.class);
-            method.setAccessible(true); // NOSONAR: see SAVE_SETTINGS_TO
-            return method;
-        } catch (NoSuchMethodException | RuntimeException e) { // NOSONAR: degrade to unchecked reads
-            LOGGER.warn("Can't reach NodeModel.saveSettingsTo, so incomplete node settings won't be flagged", e);
-            return null;
-        }
+    /** For {@link com.ben47203.knimecli.server.api.Capabilities}. */
+    public static Reflected<Method> saveSettingsTo() {
+        return SAVE_SETTINGS_TO;
     }
 }

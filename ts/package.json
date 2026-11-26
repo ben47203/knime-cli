@@ -1,11 +1,43 @@
 {
   "name": "knime-cli",
-  "version": "0.1.0",
-  "private": true,
+  "version": "0.1.0-beta.1",
+  "description": "Drive a running KNIME Analytics Platform from the terminal: read, build and run workflows. Built for agents and scripts.",
+  "keywords": [
+    "knime",
+    "cli",
+    "workflow",
+    "agent",
+    "automation",
+    "data-science"
+  ],
+  "homepage": "https://ben47203.github.io/knime-cli/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ben47203/knime-cli.git",
+    "directory": "ts"
+  },
+  "bugs": {
+    "url": "https://github.com/ben47203/knime-cli/issues"
+  },
   "type": "module",
-  "engines": { "node": ">=23.6" },
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "knime": "dist/cli/main.js"
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.map",
+    "cli/examples/*.json",
+    "README.md"
+  ],
   "scripts": {
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json && node -e \"require('node:fs').copyFileSync('cli/CONTEXT.md','dist/cli/CONTEXT.md');require('node:fs').copyFileSync('../README.md','README.md')\"",
+    "prepack": "npm run build",
     "test": "node --test --test-concurrency=1 'test/*.test.ts'",
+    "test:cli": "node --test 'cli/test/*.test.ts'",
+    "knime": "node cli/main.ts",
     "typecheck": "tsc"
   },
   "devDependencies": {

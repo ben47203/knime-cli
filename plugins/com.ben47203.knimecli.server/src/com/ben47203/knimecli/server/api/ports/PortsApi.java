@@ -1,18 +1,27 @@
 package com.ben47203.knimecli.server.api.ports;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.util.List;
+import java.util.Locale;
 
 import org.knime.core.data.BooleanValue;
 import org.knime.core.data.DataCell;
 import org.knime.core.data.DataColumnSpec;
 import org.knime.core.data.DataTableSpec;
+import org.knime.core.data.DataType;
 import org.knime.core.data.DoubleValue;
 import org.knime.core.data.IntValue;
 import org.knime.core.data.LongValue;
+import org.knime.core.data.image.ImageValue;
+import org.knime.core.data.image.png.PNGImageValue;
 import org.knime.core.node.port.PortObjectSpec;
 import org.knime.core.node.port.PortType;
 import org.knime.core.node.port.flowvariable.FlowVariablePortObject;
 import org.knime.core.node.port.flowvariable.FlowVariablePortObjectSpec;
+import org.knime.core.node.port.image.ImagePortObject;
+import org.knime.core.node.port.image.ImagePortObjectSpec;
+import org.knime.core.node.port.inactive.InactiveBranchPortObject;
 import org.knime.core.node.port.inactive.InactiveBranchPortObjectSpec;
 import org.knime.core.node.workflow.ConnectionContainer;
 import org.knime.core.node.workflow.NodeContainer;
@@ -23,17 +32,22 @@ import org.knime.core.node.workflow.WorkflowManager;
 
 import com.ben47203.knimecli.server.api.Endpoint;
 import com.ben47203.knimecli.server.api.NodeEndpoint;
+import com.ben47203.knimecli.server.api.NodeEndpoint.NodeRef;
 import com.ben47203.knimecli.server.api.NodeEndpoint.NodeTarget;
 import com.ben47203.knimecli.server.api.NodeIds;
 import com.ben47203.knimecli.server.api.NodeStates;
 import com.ben47203.knimecli.server.api.NodeStates.State;
+import com.ben47203.knimecli.server.api.Requests;
+import com.ben47203.knimecli.server.http.LocalApiServer.ApiException;
+import com.ben47203.knimecli.server.http.LocalApiServer.ApiResponse;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 /**
  * A node's input and output ports with the specs configure produced, so clients can see column names and types
- * without executing anything or guessing. Never returns table data.
+ * without executing anything or guessing; and the image on an executed node's image output port. Never returns table
+ * data.
  */
 public final class PortsApi {
 
@@ -46,7 +60,7 @@ public final class PortsApi {
     }
 
     public static List<Endpoint<?>> endpoints() {
-        return List.of(new GetPorts());
+        return List.of(new GetPorts(), new GetPortImage());
     }
 
     /**
@@ -82,6 +96,70 @@ public final class PortsApi {
             }
             return res;
         }
+    }
+
+    /** Request that names one output port of a node: its index as in node/ports, where 0 is the flow-variable port. */
+    public record PortTarget(String projectId, String workflowId, String nodeId, Integer port) implements NodeRef {
+        public PortTarget {
+            Requests.require(projectId, "projectId");
+            Requests.require(nodeId, "nodeId");
+            Requests.require(port, "port");
+        }
+    }
+
+    /**
+     * {@code POST /api/node/port/image}: the image an executed node put on an image output port, as raw bytes:
+     * {@code image/png} or {@code image/svg+xml}. 400 if the port isn't an image port, 409 if it holds no image yet
+     * (not executed, or on an inactive branch). Only image ports: no other port data is ever returned.
+     */
+    static final class GetPortImage extends NodeEndpoint<PortTarget> {
+        GetPortImage() {
+            super("node/port/image", Tier.READ, PortTarget.class);
+        }
+
+        @Override
+        protected Object execute(final WorkflowManager wfm, final NodeContainer nc, final PortTarget request)
+            throws Exception {
+            var index = request.port();
+            if (index < 0 || index >= nc.getNrOutPorts()) {
+                throw new ApiException(400, nc.getNameWithID() + " has no output port " + index + "; it has 0 to "
+                    + (nc.getNrOutPorts() - 1) + ", see node/ports");
+            }
+            var port = nc.getOutPort(index);
+            var type = port.getPortType();
+            if (!ImagePortObject.class.isAssignableFrom(type.getPortObjectClass())) {
+                throw new ApiException(400, "Output port " + index + " of " + nc.getNameWithID() + " is a "
+                    + type.getName() + " port, not an image port");
+            }
+            var object = port.getPortObject();
+            if (port.isInactive() || object instanceof InactiveBranchPortObject) {
+                throw new ApiException(409, "Output port " + index + " of " + nc.getNameWithID()
+                    + " is on an inactive branch, so it holds no image");
+            }
+            if (!(object instanceof ImagePortObject image)) {
+                throw new ApiException(409, "Output port " + index + " of " + nc.getNameWithID()
+                    + " holds no image until the node executes (it is " + NodeStates.state(nc) + ")");
+            }
+            return imageResponse(image);
+        }
+    }
+
+    /** An image port's content and its media type, read through the image cell it converts to. */
+    private static ApiResponse imageResponse(final ImagePortObject image) throws IOException, ApiException {
+        var cell = image.toDataCell(); // a missing cell if the content doesn't match the spec's type
+        if (!(cell instanceof ImageValue value)) {
+            throw new ApiException(500, "The image port's content doesn't match its declared type "
+                + image.getSpec().getDataType());
+        }
+        var contentType = switch (value.getImageExtension().toLowerCase(Locale.ROOT)) {
+            case "png" -> "image/png";
+            case "svg" -> "image/svg+xml";
+            default -> throw new ApiException(415,
+                "Unsupported image format '" + value.getImageExtension() + "'; only PNG and SVG are returned");
+        };
+        var bytes = new ByteArrayOutputStream();
+        value.getImageContent().save(bytes);
+        return new ApiResponse(contentType, bytes.toByteArray());
     }
 
     private static ObjectNode input(final WorkflowManager wfm, final NodeContainer nc, final int index) {
@@ -214,6 +292,12 @@ public final class PortsApi {
         } else if (spec instanceof FlowVariablePortObjectSpec
             || FlowVariablePortObject.class.equals(type.getPortObjectClass())) {
             json.put("kind", "flowVariables"); // deliberately no variables, see GetPorts
+        } else if (spec instanceof ImagePortObjectSpec image) {
+            json.put("kind", "image"); // fetch it from node/port/image once the node has executed
+            var format = imageFormat(image.getDataType());
+            if (format != null) {
+                json.put("format", format);
+            }
         } else if (spec instanceof DataTableSpec table) {
             json.put("kind", "table");
             var columns = json.putArray("columns");
@@ -224,6 +308,18 @@ public final class PortsApi {
             json.put("kind", type.getName());
         }
         return json;
+    }
+
+    /** {@code png} or {@code svg} for the image cell type an image spec declares; null for any other. */
+    private static String imageFormat(final DataType type) {
+        if (type == null) {
+            return null;
+        } else if (type.isCompatible(PNGImageValue.class)) {
+            return "png";
+        }
+        // SVG images are org.knime.ext.svg's SvgCell, which this plugin doesn't depend on.
+        var cellClass = type.getCellClass();
+        return cellClass != null && cellClass.getSimpleName().toLowerCase(Locale.ROOT).contains("svg") ? "svg" : null;
     }
 
     private static ObjectNode column(final DataColumnSpec column) {
