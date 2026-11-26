@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feature
+      id="com.ben47203.knimecli.feature"
+      label="KNIME CLI Local API"
+      version="0.1.0.qualifier"
+      provider-name="Ben Bryant">
+
+   <description url="https://github.com/ben47203/knime-cli">
+      Early beta. Runs a local HTTP API inside KNIME Analytics Platform so
+agents and scripts can drive the running application from the terminal
+with the knime-cli command-line tool. Relies on KNIME internals and is
+pinned to KNIME Analytics Platform 5.12.
+   </description>
+
+   <copyright url="https://github.com/ben47203/knime-cli">
+      Copyright (c) 2026 Ben Bryant.
+   </copyright>
+
+   <license url="https://github.com/ben47203/knime-cli">
+      See https://github.com/ben47203/knime-cli for licence terms.
+   </license>
+
+   <requires>
+      <!-- "equivalent" = same major.minor, so only 5.12.x satisfies these. -->
+      <import feature="org.knime.features.core" version="5.12.0" match="equivalent"/>
+      <import feature="org.knime.features.gateway" version="5.12.0" match="equivalent"/>
+   </requires>
+
+   <plugin
+         id="com.ben47203.knimecli.server"
+         version="0.0.0"/>
+
+</feature>

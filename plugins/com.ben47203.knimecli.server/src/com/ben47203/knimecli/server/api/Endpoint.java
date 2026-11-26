@@ -3,6 +3,7 @@ package com.ben47203.knimecli.server.api;
 import org.knime.gateway.json.util.ObjectMapperUtil;
 
 import com.ben47203.knimecli.server.http.LocalApiServer.ApiException;
+import com.ben47203.knimecli.server.http.LocalApiServer.ApiResponse;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -10,7 +11,7 @@ import com.fasterxml.jackson.databind.exc.UnrecognizedPropertyException;
 import com.fasterxml.jackson.databind.exc.ValueInstantiationException;
 
 /**
- * One {@code POST /api/...} route: a typed request record in, any Jackson-serialisable object out.
+ * One {@code POST /api/...} route: a typed request record in, any Jackson-serialisable object (or raw bytes) out.
  *
  * <p>
  * Template method: {@link #handle(byte[])} parses and validates the request, then calls {@link #run(Object)}.
@@ -64,11 +65,15 @@ public abstract class Endpoint<Q> {
     }
 
     /** Entry point for {@link LocalApiServer.ApiHandler}. */
-    final byte[] handle(final byte[] body) throws Exception {
-        return RESPONSE_MAPPER.writeValueAsBytes(run(parse(body)));
+    final ApiResponse handle(final byte[] body) throws Exception {
+        var result = run(parse(body));
+        return result instanceof ApiResponse binary ? binary : ApiResponse.json(RESPONSE_MAPPER.writeValueAsBytes(result));
     }
 
-    /** Runs the endpoint for a parsed, validated request; throw {@link ApiException} for non-500 failures. */
+    /**
+     * Runs the endpoint for a parsed, validated request; throw {@link ApiException} for non-500 failures. Returns any
+     * Jackson-serialisable object, sent as JSON, or an {@link ApiResponse} to send other bytes, such as an image.
+     */
     protected abstract Object run(Q request) throws Exception; // NOSONAR: failures become 500s in one place
 
     private Q parse(final byte[] body) throws ApiException {

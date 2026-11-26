@@ -20,3 +20,6 @@ dist/
 # Editors
 *.swp
 *~
+
+# npm package copy of the root README
+ts/README.md

@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>knime-cli</title>
+<meta name="description" content="Let agents and scripts drive a running KNIME Analytics Platform from the terminal.">
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --fg: #1b1f24;
+    --muted: #59636e;
+    --border: #d1d9e0;
+    --surface: #f6f8fa;
+    --accent: #0b6bcb;
+    --warn-bg: #fff8e5;
+    --warn-border: #e5c158;
+    --warn-fg: #6b4e00;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117;
+      --fg: #e6edf3;
+      --muted: #9198a1;
+      --border: #30363d;
+      --surface: #161b22;
+      --accent: #4c9fff;
+      --warn-bg: #2b2210;
+      --warn-border: #7a5e14;
+      --warn-fg: #e9c46a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  main { max-width: 760px; margin: 0 auto; padding: 48px 16px 64px; }
+  header { margin-bottom: 32px; }
+  h1 { font-size: 2.4rem; line-height: 1.1; margin: 0 0 12px; letter-spacing: -0.02em; }
+  h1 code { font: inherit; }
+  .tagline { font-size: 1.2rem; color: var(--muted); margin: 0 0 20px; }
+  .badge {
+    display: inline-block; vertical-align: middle; margin-left: 10px;
+    padding: 2px 10px; border-radius: 999px; font-size: 0.8rem; font-weight: 600;
+    letter-spacing: 0.04em; text-transform: uppercase;
+    background: var(--warn-bg); color: var(--warn-fg); border: 1px solid var(--warn-border);
+  }
+  .notice {
+    background: var(--warn-bg); color: var(--warn-fg); border: 1px solid var(--warn-border);
+    border-radius: 8px; padding: 12px 16px; margin: 0 0 24px;
+  }
+  .links a { margin-right: 16px; }
+  h2 { font-size: 1.35rem; margin: 40px 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+  h3 { font-size: 1.05rem; margin: 24px 0 8px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size: 0.9em; }
+  :not(pre) > code { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; overflow-wrap: anywhere; }
+  pre {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 16px; overflow-x: auto; line-height: 1.5;
+  }
+  pre .c { color: var(--muted); }
+  ol, ul { padding-left: 1.4em; }
+  li { margin: 4px 0; }
+  .kbd { font-weight: 600; }
+  footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--border); color: var(--muted); font-size: 0.9rem; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1><code>knime-cli</code><span class="badge">Beta</span></h1>
+    <p class="tagline">Lets agents and scripts drive a running KNIME Analytics Platform from the terminal.</p>
+    <p class="notice"><strong>Early beta.</strong> knime-cli relies on KNIME internals and is pinned to KNIME Analytics Platform 5.12. Expect rough edges, and expect it to break on other KNIME versions.</p>
+    <p class="links">
+      <a href="https://github.com/ben47203/knime-cli">GitHub repository</a>
+      <a href="https://github.com/ben47203/knime-cli#readme">README</a>
+      <a href="https://github.com/ben47203/knime-cli/releases">Releases</a>
+    </p>
+  </header>
+
+  <section>
+    <h2>How it works</h2>
+    <p>A small KNIME extension starts a local API inside the running Analytics Platform, listening on <code>127.0.0.1</code> only and protected by a per-session token. The <code>knime</code> command-line tool finds the running instance and talks to it, so you see every change appear live in the KNIME window.</p>
+  </section>
+
+  <section>
+    <h2>1. Install the KNIME extension</h2>
+    <ol>
+      <li>In KNIME Analytics Platform 5.12, open <span class="kbd">Preferences</span> &rarr; <span class="kbd">Install/Update</span> &rarr; <span class="kbd">Available Software Sites</span>.</li>
+      <li>Click <span class="kbd">Add&hellip;</span>, name it <code>knime-cli</code> and use this location:
+        <pre>https://ben47203.github.io/knime-cli/update/</pre>
+      </li>
+      <li>Choose <span class="kbd">File</span> &rarr; <span class="kbd">Install KNIME Extensions&hellip;</span>, tick <span class="kbd">KNIME CLI Local API</span> under the <span class="kbd">KNIME CLI</span> category, and follow the wizard. Accept the prompt about unsigned content.</li>
+      <li>Restart KNIME when asked.</li>
+    </ol>
+    <h3>Offline alternative</h3>
+    <p>Download the update site zip from the <a href="https://github.com/ben47203/knime-cli/releases">latest release</a>. In <span class="kbd">Available Software Sites</span>, click <span class="kbd">Add&hellip;</span> &rarr; <span class="kbd">Archive&hellip;</span>, select the zip, then install as above.</p>
+  </section>
+
+  <section>
+    <h2>2. Install the CLI</h2>
+    <p>Requires Node.js 22 or later.</p>
+    <pre>npm install -g knime-cli</pre>
+  </section>
+
+  <section>
+    <h2>3. Quick start</h2>
+    <p>With KNIME running and a workflow open:</p>
+<pre><span class="c"># check the CLI can see the running KNIME</span>
+knime status
+
+<span class="c"># a tour of the commands and how agents should use them</span>
+knime guide
+
+<span class="c"># print the open workflow: nodes, connections and states</span>
+knime workflow show</pre>
+  </section>
+
+  <section>
+    <h2>Requirements</h2>
+    <ul>
+      <li>KNIME Analytics Platform <strong>5.12</strong> exactly. The extension refuses to install into other versions.</li>
+      <li>macOS, Windows or Linux.</li>
+      <li>Node.js for the CLI (see above).</li>
+      <li>KNIME must be running with its user interface; there is no headless mode.</li>
+    </ul>
+  </section>
+
+  <footer>
+    knime-cli is an independent project and is not affiliated with or endorsed by KNIME AG.
+    Source, issues and documentation on <a href="https://github.com/ben47203/knime-cli">GitHub</a>.
+  </footer>
+</main>
+</body>
+</html>

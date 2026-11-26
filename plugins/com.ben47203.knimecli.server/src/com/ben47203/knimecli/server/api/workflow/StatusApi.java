@@ -51,7 +51,11 @@ public final class StatusApi {
         }
     }
 
-    /** {@code POST /api/workflow/state}: every node's state plus a {@code stateHash}; cheap enough to poll. */
+    /**
+     * {@code POST /api/workflow/state}: every node's state plus a {@code stateHash}; cheap enough to poll. Also
+     * {@code dirty}: whether the whole project has unsaved changes, even when a metanode is addressed. Not part of the
+     * hash, which tracks node states only.
+     */
     static final class WorkflowState extends WorkflowEndpoint<WorkflowTarget> {
         WorkflowState() {
             super("workflow/state", Tier.READ, WorkflowTarget.class);
@@ -62,6 +66,7 @@ public final class StatusApi {
             var nodes = NodeStates.children(wfm).stream().map(NodeStates::describe).toList();
             var res = new LinkedHashMap<String, Object>();
             res.put("stateHash", NodeStates.stateHash(nodes));
+            res.put("dirty", wfm.getProjectWFM().isDirty());
             res.put("nodes", nodes);
             return res;
         }

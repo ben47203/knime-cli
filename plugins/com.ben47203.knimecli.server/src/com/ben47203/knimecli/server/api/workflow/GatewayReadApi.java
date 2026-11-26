@@ -30,7 +30,10 @@ public final class GatewayReadApi {
         return List.of(new Projects(), new Workflow());
     }
 
-    /** {@code POST /api/projects}, body {@code {}}: the projects open in the UI. */
+    /**
+     * {@code POST /api/projects}, body {@code {}}: the projects open in the UI, each with {@code dirty} (unsaved
+     * changes), so one call shows what needs saving; {@code project/state} has the details for one.
+     */
     static final class Projects extends Endpoint<NoArgs> {
         Projects() {
             super("projects", Tier.READ, NoArgs.class);
@@ -42,7 +45,11 @@ public final class GatewayReadApi {
             List<Map<String, Object>> projects = pm.getProjectIds().stream().<Map<String, Object>> map(id -> {
                 var p = new LinkedHashMap<String, Object>();
                 p.put("projectId", id);
-                p.put("name", pm.getProject(id).map(Project::getName).orElse(null));
+                var project = pm.getProject(id);
+                p.put("name", project.map(Project::getName).orElse(null));
+                // Null if not loaded: loading it here would happen behind the UI's back.
+                p.put("dirty", project.flatMap(Project::getWorkflowManagerIfLoaded).map(WorkflowManager::isDirty)
+                    .orElse(null));
                 return p;
             }).toList();
             return Map.of("projects", projects);

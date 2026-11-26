@@ -1,0 +1,89 @@
+name: Update site
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main, dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: update-site-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Build p2 repository
+        run: mvn -B -ntp clean verify
+
+      - name: Assemble Pages site
+        run: releng/assemble-site.sh _site
+
+      - name: Upload Pages artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+      - name: Upload zipped p2 repository
+        uses: actions/upload-artifact@v7
+        with:
+          name: p2-repository-zip
+          path: releng/com.ben47203.knimecli.update/target/*.zip
+          if-no-files-found: error
+
+  # Pages deploys from main only: the github-pages environment only accepts
+  # the default branch unless a tag rule is added in Settings -> Environments.
+  deploy-pages:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v6
+      - id: deployment
+        uses: actions/deploy-pages@v5
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: p2-repository-zip
+          path: dist
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          zip="dist/knime-cli-update-site-${TAG}.zip"
+          mv dist/*.zip "$zip"
+          gh release create "$TAG" "$zip" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "knime-cli $TAG" \
+            --generate-notes \
+            --prerelease
