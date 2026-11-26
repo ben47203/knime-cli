@@ -16,8 +16,9 @@ pinned to KNIME Analytics Platform 5.12.
       Copyright (c) 2026 Ben Bryant.
    </copyright>
 
-   <license url="https://github.com/ben47203/knime-cli">
-      See https://github.com/ben47203/knime-cli for licence terms.
+   <license url="https://www.gnu.org/licenses/gpl-3.0.html">
+      Licensed under the GNU General Public License, version 3 or (at your option)
+any later version. Full text: https://github.com/ben47203/knime-cli/blob/main/LICENSE
    </license>
 
    <requires>

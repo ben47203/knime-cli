@@ -204,6 +204,6 @@ Issues and pull requests are welcome. Please open an issue before larger changes
 
 ## Licence
 
-To be confirmed before the first stable release.
+[GPL-3.0-or-later](https://github.com/ben47203/knime-cli/blob/main/LICENSE), the same family of licence as KNIME Analytics Platform.
 
 <sub>knime-cli is an independent project and isn't affiliated with or endorsed by KNIME AG. KNIME® is a registered trademark of KNIME AG.</sub>
