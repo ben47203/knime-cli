@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<site>
+   <feature id="com.ben47203.knimecli.feature" version="0.0.0">
+      <category name="knime-cli"/>
+   </feature>
+   <category-def name="knime-cli" label="KNIME CLI">
+      <description>
+         Local API that lets agents and scripts drive a running KNIME Analytics Platform from the terminal.
+      </description>
+   </category-def>
+</site>
