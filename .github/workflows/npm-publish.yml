@@ -1,0 +1,44 @@
+name: Publish to npm
+
+# Runs when a version tag is pushed (e.g. v0.1.0-beta.2). Uses npm trusted
+# publishing (OIDC), so no token or 2FA prompt is needed; set it up once on
+# npmjs.com → knime-cli → Settings → Trusted Publisher → GitHub Actions,
+# repository ben47203/knime-cli, workflow npm-publish.yml.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          cache: npm
+          cache-dependency-path: ts/package-lock.json
+      # Trusted publishing needs npm 11.5.1 or newer.
+      - run: npm install -g npm@latest
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run test:cli
+      - name: Tag matches package version
+        run: |
+          version="v$(node -p "require('./package.json').version")"
+          if [ "$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME doesn't match ts/package.json ($version)"; exit 1
+          fi
+      - name: Publish
+        run: |
+          case "$GITHUB_REF_NAME" in *-*) tag=beta ;; *) tag=latest ;; esac
+          npm publish --tag "$tag"

@@ -10,6 +10,7 @@
     "automation",
     "data-science"
   ],
+  "license": "GPL-3.0-or-later",
   "homepage": "https://ben47203.github.io/knime-cli/",
   "repository": {
     "type": "git",
